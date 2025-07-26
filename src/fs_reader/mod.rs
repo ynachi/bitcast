@@ -1,6 +1,7 @@
 mod seek;
 
 use std::io;
+pub use crate::fs_reader::seek::SeekReader;
 
 pub trait FileReader {
     /// Reads a specific number of bytes from the file at the given offset. It is advised to the

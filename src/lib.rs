@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 mod storage;
-mod keydir;
+pub mod keydir;
 mod fs_writer;
 mod fs_reader;
 mod merge;

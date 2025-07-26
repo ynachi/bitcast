@@ -7,7 +7,7 @@ use crate::fs_writer::FileWriter;
 use crc32fast::Hasher;
 use crate::EngineOptions;
 
-struct MutexFileWriter {
+pub struct MutexFileWriter {
     active_file: Arc<Mutex<File>>,
     lock_file: File,
     engine_options: EngineOptions,
@@ -71,7 +71,7 @@ impl FileWriter for MutexFileWriter {
 }
 
 impl MutexFileWriter {
-    fn new(engine_options: EngineOptions, data_file_initial_id: u16) -> io::Result<Self> {
+    pub fn new(engine_options: EngineOptions, data_file_initial_id: u16) -> io::Result<Self> {
         let lock_file_path = engine_options.data_path.join("write.lock");
 
         let lock_file = OpenOptions::new()
@@ -86,7 +86,6 @@ impl MutexFileWriter {
         let data_file_path = engine_options.data_path.join(format!("{:06}.data", data_file_initial_id));
         let data_file = OpenOptions::new()
             .read(true)
-            .write(true)
             .append(true)
             .create(true)
             .open(&data_file_path)?;

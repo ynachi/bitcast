@@ -1,4 +1,5 @@
 mod mutex;
+pub use mutex::MutexFileWriter;
 
 pub trait FileWriter {
     // Implementation details for writing to a file
