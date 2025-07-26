@@ -120,7 +120,7 @@ impl Drop for MutexFileWriter {
         tracing::debug!("MutexFileWriter dropped, lock file and active file closed.");
     }
 }
-
+#[cfg(test)]
 mod tests {
     use std::io::{BufRead, Read};
     use super::*;
