@@ -1,12 +1,12 @@
-use crate::fs_reader::{FileReader, SeekReader};
-use crate::fs_writer::{FileWriter, MutexFileWriter};
-use crate::keydir::{KeyDir, StdKeyDir};
-use crate::EngineOptions;
+use crate::fs_reader::FileReader;
+use crate::fs_writer::FileWriter;
+use crate::keydir::{InMemoryEntry, KeyDir};
+use crate::{EngineOptions, current_time_millis};
 use std::collections::BTreeMap;
-use std::io;
 use std::sync::RwLock;
+use tracing::{debug, error};
 
-pub struct Engine <T: KeyDir, F: FileReader, W: FileWriter> {
+pub struct Engine<T: KeyDir, F: FileReader, W: FileWriter> {
     /// Various configuration options for the engine.
     options: EngineOptions,
     key_dir: T,
@@ -20,10 +20,7 @@ pub struct Engine <T: KeyDir, F: FileReader, W: FileWriter> {
     /// Datafiles is a cache of the opened data files. The key is the file number, and the value is
     /// a FileReader that allows reading from the file. FileReader can be thought as a file
     /// descriptor. No ARC because the engine itself would be wrapped in an ARC.
-    data_files: RwLock<BTreeMap<u16, F>>,
-    /// Read handler is used to read data on the file storage. They can be a different implementation
-    /// of the reader.
-    read_handler: F,
+    data_files: RwLock<BTreeMap<usize, F>>,
 }
 
 impl<T, F, W> Engine<T, F, W>
@@ -32,13 +29,11 @@ where
     F: FileReader,
     W: FileWriter,
 {
-
     pub fn new(options: EngineOptions, key_dir: T, file_reader: F, file_writer: W) -> Self {
         Self {
             options,
             key_dir,
             write_handler: file_writer,
-            read_handler: file_reader,
             data_files: RwLock::new(BTreeMap::new()),
         }
     }
@@ -52,12 +47,43 @@ where
         unimplemented!()
     }
 
-    pub fn put(&self, _key: &[u8], _value: &[u8]) {
-        unimplemented!()
-    }
+    // pub fn put(&mut self, key: &[u8], value: &[u8])  {
+    //     if let Err(e) = self.write_handler.write(key, value) {
+    //             // TODO count write failure rate and act
+    //             error!("failed to write to file: {e:?}");
+    //     }
+    //
+    //     let entry = InMemoryEntry {
+    //         file_id: self.write_handler.file_id(),
+    //         value_size: value.len(),
+    //         value_offset: 0,
+    //         timestamp: current_time_millis(),
+    //     };
+    //
+    //     self.key_dir.insert(key, entry)
+    //
+    //     Ok(())
+    // }
 
-    pub fn get(&self, _key: &[u8]) -> Option<Vec<u8>> {
-        unimplemented!()
+    pub fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
+        let entry = self.key_dir.get(key)?;
+        let file_id = entry.file_id;
+        debug!(
+            "reading value for {} from file: {file_id}",
+            String::from_utf8_lossy(key)
+        );
+        let guard = self.data_files.read().expect("Mutex poisoned");
+        let reader = guard
+            .get(&file_id)
+            .expect("file not found in keydir but it should be");
+
+        match reader.read_at(entry.value_offset as u64, entry.value_size) {
+            Ok(value) => Some(value),
+            Err(e) => {
+                error!("Failed to read value from file: {e:?}");
+                None
+            }
+        }
     }
 
     pub fn delete(&self, _key: &[u8]) {

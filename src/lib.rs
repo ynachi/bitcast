@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 
-mod storage;
-pub mod keydir;
-mod fs_writer;
 mod fs_reader;
+mod fs_writer;
+pub mod keydir;
 mod merge;
 mod metrics;
+mod storage;
 
 #[derive(Debug, Clone)]
 pub struct EngineOptions {
@@ -29,8 +29,15 @@ impl Default for EngineOptions {
             data_path: PathBuf::from("./bitcask"),
             compress_old_files: false,
             data_file_max_size: 1024 * 1024 * 128, // 128 MB
-            key_max_size: 1024, // 1 KB
-            value_max_size: 1024 * 1024, // 1 MB
+            key_max_size: 1024,                    // 1 KB
+            value_max_size: 1024 * 1024,           // 1 MB
         }
     }
+}
+
+pub(crate) fn current_time_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
 }

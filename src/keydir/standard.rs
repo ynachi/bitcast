@@ -1,38 +1,41 @@
 use std::collections::HashMap;
-use std::io;
 use std::sync::RwLock;
 
-use crate::keydir::InMemoryEntry;
+use crate::keydir::{InMemoryEntry, KeyDir};
 
 pub struct StdKeyDir {
     // No ARC because KeyDir is meant to be used in a struct which will be wrapped into an
     // ARC.
-    inner: RwLock<HashMap<Vec<u8>, InMemoryEntry>>
+    inner: RwLock<HashMap<Vec<u8>, InMemoryEntry>>,
 }
 
 impl StdKeyDir {
     pub fn new() -> Self {
         StdKeyDir {
-            inner: RwLock::new(HashMap::new())
+            inner: RwLock::new(HashMap::new()),
         }
     }
+}
 
-    // TODO: we use io result for now. We might want to use more specific error types later
-    pub fn get(&self, key: Vec<u8>) -> io::Result<Option<InMemoryEntry>> {
-        let guard = self.inner.read().map_err(|e| io::Error::other(format!("keydir read error: {e}")))?;
+impl Default for StdKeyDir {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-        Ok(guard.get(&key).cloned())
+impl KeyDir for StdKeyDir {
+    fn get(&self, key: &[u8]) -> Option<InMemoryEntry> {
+        let guard = self.inner.read().expect("Mutex poisoned");
+        guard.get(key).cloned()
     }
 
-    fn insert(&self, key: Vec<u8>, entry: InMemoryEntry) -> io::Result<()> {
-        let mut guard = self.inner.write().map_err(|e| io::Error::other(format!("keydir write error: {e}")))?;
-        guard.insert(key, entry);
-        Ok(())
+    fn insert(&self, key: &[u8], entry: InMemoryEntry) -> Option<InMemoryEntry> {
+        let mut guard = self.inner.write().expect("Mutex poisoned");
+        guard.insert(key.to_vec(), entry)
     }
 
-    fn remove(&self, key: Vec<u8>) -> io::Result<()> {
-        let mut guard = self.inner.write().map_err(|e| io::Error::other(format!("keydir write error: {e}")))?;
-        guard.remove(&key);
-        Ok(())
+    fn remove(&self, key: &[u8]) -> Option<InMemoryEntry> {
+        let mut guard = self.inner.write().expect("Mutex poisoned");
+        guard.remove(key)
     }
 }

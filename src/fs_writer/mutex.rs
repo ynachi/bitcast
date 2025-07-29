@@ -1,24 +1,23 @@
-use std::fs::{remove_file, File, OpenOptions};
+use crate::EngineOptions;
+use crate::fs_writer::FileWriter;
+use crc32fast::Hasher;
+use std::fs::{File, OpenOptions, remove_file};
 use std::io;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
-use crate::fs_writer::FileWriter;
-use crc32fast::Hasher;
-use crate::EngineOptions;
 
 pub struct MutexFileWriter {
-    active_file: Arc<Mutex<File>>,
+    // we have to maintain the offset manually because
+    // entries need that information
+    active_file: Arc<Mutex<(File, usize)>>,
+    // TODO use me for multiprocess lock on data files
     lock_file: File,
     engine_options: EngineOptions,
+    pub file_id: usize,
 }
 
-fn build_entry_buffer(
-    key: &[u8],
-    value: &[u8],
-    timestamp: u64,
-    buffer: &mut Vec<u8>,
-)  {
+fn build_entry_buffer(key: &[u8], value: &[u8], timestamp: u64, buffer: &mut Vec<u8>) {
     let key_size = key.len();
     let data_size = value.len();
 
@@ -37,22 +36,28 @@ fn build_entry_buffer(
 
     // Write CRC into the first 4 bytes
     buffer[0..4].copy_from_slice(&crc.to_le_bytes());
-
 }
 
 impl FileWriter for MutexFileWriter {
-    fn write(&mut self, key: &[u8], value: &[u8]) -> io::Result<()> {
+    fn write(&mut self, key: &[u8], value: &[u8]) -> io::Result<usize> {
         let key_size = key.len();
         if key_size > self.engine_options.key_max_size {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "Key size exceeds maximum allowed size"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Key size exceeds maximum allowed size",
+            ));
         }
         let data_size = value.len();
         if data_size > self.engine_options.value_max_size {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "Value size exceeds maximum allowed size"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Value size exceeds maximum allowed size",
+            ));
         }
         let now = SystemTime::now();
 
-        let timestamp = now.duration_since(UNIX_EPOCH)
+        let timestamp = now
+            .duration_since(UNIX_EPOCH)
             .map_err(io::Error::other)?
             .as_millis() as u64;
 
@@ -62,16 +67,23 @@ impl FileWriter for MutexFileWriter {
 
         build_entry_buffer(key, value, timestamp, &mut entry_buffer);
 
-        let mut guard = self.active_file.lock()
-            .map_err(|_| io::Error::other("failed to lock file for writing"))?;
+        let mut guard = self.active_file.lock().expect("mutex lock poisoned");
 
-        guard.write_all(&entry_buffer)?;
-        guard.flush()
+        guard.0.write_all(&entry_buffer)?;
+        guard.0.flush()?;
+        // the current offset will be the offset of the entry we are inserting
+        let current_offset = guard.1;
+        guard.1 += entry_size;
+        Ok(current_offset)
+    }
+
+    fn file_id(&self) -> usize {
+        self.file_id
     }
 }
 
 impl MutexFileWriter {
-    pub fn new(engine_options: EngineOptions, data_file_initial_id: u16) -> io::Result<Self> {
+    pub fn new(engine_options: EngineOptions, data_file_id: usize) -> io::Result<Self> {
         let lock_file_path = engine_options.data_path.join("write.lock");
 
         let lock_file = OpenOptions::new()
@@ -81,9 +93,14 @@ impl MutexFileWriter {
             // TODO: Check how to prevent stale lock.
             .create_new(true)
             .open(&lock_file_path)?;
-        tracing::debug!("lock successfully acquired, created lock file at {:?}", lock_file_path);
+        tracing::debug!(
+            "lock successfully acquired, created lock file at {:?}",
+            lock_file_path
+        );
 
-        let data_file_path = engine_options.data_path.join(format!("{:06}.data", data_file_initial_id));
+        let data_file_path = engine_options
+            .data_path
+            .join(format!("{:06}.data", data_file_id));
         let data_file = OpenOptions::new()
             .read(true)
             .append(true)
@@ -92,9 +109,10 @@ impl MutexFileWriter {
         tracing::debug!("opened initial data file at {:?}", data_file_path);
 
         Ok(MutexFileWriter {
-            active_file: Arc::new(Mutex::new(data_file)),
+            active_file: Arc::new(Mutex::new((data_file, 0))),
             lock_file,
             engine_options,
+            file_id: data_file_id,
         })
     }
 }
@@ -107,13 +125,15 @@ impl Drop for MutexFileWriter {
 
         match self.active_file.lock() {
             Ok(guard) => {
-                guard.sync_all()
+                guard
+                    .0
+                    .sync_all()
                     .unwrap_or_else(|e| tracing::error!("failed to sync active file: {}", e));
-            },
+            }
             Err(e) => tracing::error!("failed to lock active file mutex: {}", e),
         };
 
-        if let Err(e) = self.active_file.lock().unwrap().sync_all() {
+        if let Err(e) = self.active_file.lock().unwrap().0.sync_all() {
             tracing::error!("Failed to sync active file: {}", e);
         }
         tracing::debug!("MutexFileWriter dropped, lock file and active file closed.");
@@ -121,10 +141,10 @@ impl Drop for MutexFileWriter {
 }
 #[cfg(test)]
 mod tests {
-    use std::io::{BufRead, Read};
     use super::*;
+    use crate::current_time_millis;
+    use std::io::Read;
     use tempfile::TempDir;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn test_mutex_writer() {
@@ -140,10 +160,11 @@ mod tests {
         let mut writer = MutexFileWriter::new(engine_options.clone(), 0).unwrap();
 
         // check if the written data matches what is expected
-        writer.write(b"key", b"value").unwrap();
+        let cursor = writer.write(b"key", b"value").unwrap();
         let mut file = File::open(engine_options.data_path.join("000000.data")).unwrap();
         let mut data = Vec::with_capacity(36);
         let line = file.read_to_end(&mut data).unwrap();
+        assert_eq!(cursor, 0);
         assert_eq!(line, 36);
         // check key size is well written
         assert_eq!(u64::from_le_bytes(data[12..20].try_into().unwrap()), 3);
@@ -157,12 +178,14 @@ mod tests {
         let file_timestamp = u64::from_le_bytes(data[4..12].try_into().unwrap());
         // put a sleep to make sure some time has passed since the put operation
         std::thread::sleep(std::time::Duration::from_millis(100));
-        let now = SystemTime::now();
-        let now_timestamp = now.duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+        let now_timestamp = current_time_millis();
         assert!(file_timestamp < now_timestamp);
 
         // Assert we cannot have two writers
         assert!(MutexFileWriter::new(engine_options.clone(), 0).is_err());
+        // lets write again and check that cursor move
+        let cursor = writer.write(b"key", b"value").unwrap();
+        assert_eq!(cursor, 36);
     }
 
     #[test]

@@ -1,5 +1,5 @@
-use std::sync::{Arc, Condvar, Mutex};
 use std::sync::atomic::AtomicUsize;
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use tracing::error;
 
@@ -30,14 +30,13 @@ impl MergeManager {
             stale_keys_count: AtomicUsize::new(0),
         }
     }
-    
+
     fn signal(&self, signal: WorkerSignal) {
         let (lock, cvar) = &*self.trigger;
-        let mut guard = lock.lock()
-            .unwrap_or_else(|_| {
-                error!("failed to lock trigger mutex, system exiting");
-                std::process::abort();
-            });
+        let mut guard = lock.lock().unwrap_or_else(|_| {
+            error!("failed to lock trigger mutex, system exiting");
+            std::process::abort();
+        });
         *guard = signal;
         cvar.notify_one();
     }
@@ -45,11 +44,10 @@ impl MergeManager {
     fn worker_loop(trigger: Arc<(Mutex<WorkerSignal>, Condvar)>) {
         let (lock, cvar) = &*trigger;
         loop {
-            let mut guard = lock.lock()
-                .unwrap_or_else(|_| {
-                    error!("failed to lock trigger mutex, system exiting");
-                    std::process::abort();
-                });
+            let mut guard = lock.lock().unwrap_or_else(|_| {
+                error!("failed to lock trigger mutex, system exiting");
+                std::process::abort();
+            });
 
             while *guard == WorkerSignal::Idle {
                 guard = cvar.wait(guard).unwrap_or_else(|_| {
@@ -70,5 +68,4 @@ impl MergeManager {
             }
         }
     }
-
 }
