@@ -47,23 +47,23 @@ where
         unimplemented!()
     }
 
-    // pub fn put(&mut self, key: &[u8], value: &[u8])  {
-    //     if let Err(e) = self.write_handler.write(key, value) {
-    //             // TODO count write failure rate and act
-    //             error!("failed to write to file: {e:?}");
-    //     }
-    //
-    //     let entry = InMemoryEntry {
-    //         file_id: self.write_handler.file_id(),
-    //         value_size: value.len(),
-    //         value_offset: 0,
-    //         timestamp: current_time_millis(),
-    //     };
-    //
-    //     self.key_dir.insert(key, entry)
-    //
-    //     Ok(())
-    // }
+    pub fn put(&mut self, key: &[u8], value: &[u8])  {
+        match self.write_handler.write(key, value) {
+            Ok(offset) => {
+                let entry = InMemoryEntry {
+                    file_id: self.write_handler.file_id(),
+                    value_size: value.len(),
+                    value_offset: offset,
+                    timestamp: current_time_millis(),
+                };
+                self.key_dir.insert(key, entry);
+            },
+            Err(e) => {
+                // TODO count write failure rate and act
+                error!("failed to write to file: {e:?}");
+            }
+        }
+    }
 
     pub fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
         let entry = self.key_dir.get(key)?;
