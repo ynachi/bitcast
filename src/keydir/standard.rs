@@ -38,4 +38,9 @@ impl KeyDir for StdKeyDir {
         let mut guard = self.inner.write().expect("Mutex poisoned");
         guard.remove(key)
     }
+
+    fn keys(&self) -> Vec<Vec<u8>> {
+        let guard = self.inner.read().expect("Mutex poisoned");
+        guard.keys().cloned().collect()
+    }
 }

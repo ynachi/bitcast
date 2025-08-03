@@ -17,4 +17,5 @@ pub trait KeyDir {
     fn get(&self, key: &[u8]) -> Option<InMemoryEntry>;
     fn insert(&self, key: &[u8], entry: InMemoryEntry) -> Option<InMemoryEntry>;
     fn remove(&self, key: &[u8]) -> Option<InMemoryEntry>;
+    fn keys(&self) -> Vec<Vec<u8>>;
 }

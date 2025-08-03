@@ -7,6 +7,7 @@ use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+
 pub struct MutexFileWriter {
     // we have to maintain the offset manually because
     // entries need that information
@@ -114,6 +115,15 @@ impl MutexFileWriter {
             engine_options,
             file_id: data_file_id,
         })
+    }
+
+    pub fn rotate(&mut self) -> io::Result<()> {
+        let mut guard = self.active_file.lock().expect("mutex lock poisoned");
+        guard.0.sync_all()?;
+        guard.0.flush()?;
+        guard.0.set_len(0)?;
+        guard.1 = 0;
+        Ok(())
     }
 }
 

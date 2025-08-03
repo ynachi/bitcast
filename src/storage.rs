@@ -60,6 +60,7 @@ where
             },
             Err(e) => {
                 // TODO count write failure rate and act
+                // because too many failures means storage issue
                 error!("failed to write to file: {e:?}");
             }
         }
@@ -86,8 +87,16 @@ where
         }
     }
 
-    pub fn delete(&self, _key: &[u8]) {
-        unimplemented!()
+    pub fn delete(&mut self, key: &[u8]) {
+        match self.write_handler.write(key, &[]) {
+            Ok(_) => {
+                self.key_dir.remove(key);
+            },
+            Err(e) => {
+                // TODO count write failure rate and act
+                error!("failed to write to file: {e:?}");
+            }
+        }
     }
 
     pub fn merge(&self) {
@@ -95,7 +104,7 @@ where
     }
 
     pub fn list_keys(&self) -> Vec<Vec<u8>> {
-        unimplemented!()
+        self.key_dir.keys()
     }
 
     pub fn sync(&self) {
