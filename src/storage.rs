@@ -1,38 +1,39 @@
-use crate::fs_reader::FileReader;
-use crate::fs_writer::FileWriter;
-use crate::keydir::{InMemoryEntry, KeyDir};
-use crate::{EngineOptions, current_time_millis};
-use std::collections::BTreeMap;
+use crate::{EngineOptions, current_time_millis, InMemoryEntry};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::RwLock;
 use tracing::{debug, error};
+use crate::reader::FileReader;
+use crate::writer::WriteHandler;
 
-pub struct Engine<T: KeyDir, F: FileReader, W: FileWriter> {
+pub struct Engine {
     /// Various configuration options for the engine.
     options: EngineOptions,
-    key_dir: T,
+    /// keydir, as defined in bitsect paper
+    key_dir: RwLock<HashMap<Vec<u8>, InMemoryEntry>>,
     /// FileWriter own the active file. It is used to write new data to the active file.
     /// It is also used to close the active file when it reaches the maximum size or when
     /// the engine is dropped.
     /// The active file is a wrapper around the opened active file. It allows directly writing
     /// to the file without needing to open it every time.
     /// The file is closed when the engine is dropped.
-    write_handler: W,
+    write_handler: WriteHandler,
     /// Datafiles is a cache of the opened data files. The key is the file number, and the value is
     /// a FileReader that allows reading from the file. FileReader can be thought as a file
     /// descriptor. No ARC because the engine itself would be wrapped in an ARC.
-    data_files: RwLock<BTreeMap<usize, F>>,
+    data_files: RwLock<BTreeMap<usize, FileReader>>,
 }
 
-impl<T, F, W> Engine<T, F, W>
-where
-    T: KeyDir,
-    F: FileReader,
-    W: FileWriter,
+impl Engine
 {
-    pub fn new(options: EngineOptions, key_dir: T, file_reader: F, file_writer: W) -> Self {
+    /// Creates a new engine. Please note that the active file needs to also be cached in
+    /// the data_files map, this is why this method takes the ID and a FD to the active file.
+    pub fn new(options: EngineOptions, active_file_reader: FileReader, active_file_id: usize, file_writer: WriteHandler) -> Self {
+        let mut data_files = BTreeMap::new();
+        data_files.insert(active_file_id, active_file_reader);
+
         Self {
             options,
-            key_dir,
+            key_dir: RwLock::new(HashMap::new()),
             write_handler: file_writer,
             data_files: RwLock::new(BTreeMap::new()),
         }
@@ -49,14 +50,19 @@ where
 
     pub fn put(&mut self, key: &[u8], value: &[u8])  {
         match self.write_handler.write(key, value) {
-            Ok(offset) => {
+            Ok(((offset, file_id), file)) => {
                 let entry = InMemoryEntry {
-                    file_id: self.write_handler.file_id(),
+                    file_id,
                     value_size: value.len(),
                     value_offset: offset,
                     timestamp: current_time_millis(),
                 };
-                self.key_dir.insert(key, entry);
+                self.key_dir.write().expect("Mutex Poisoned").insert(Vec::from(key), entry);
+
+                // should we rotate the active file?
+                if let Some((file, file_id)) = file {
+                    self.data_files.write().expect("mutex poisoned").insert(file_id, file.into());
+                }
             },
             Err(e) => {
                 // TODO count write failure rate and act
@@ -67,7 +73,8 @@ where
     }
 
     pub fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
-        let entry = self.key_dir.get(key)?;
+        // entry is cheap to clone
+        let entry = self.key_dir.read().expect("mutex poisoned").get(key).cloned()?;
         let file_id = entry.file_id;
         debug!(
             "reading value for {} from file: {file_id}",
@@ -90,7 +97,7 @@ where
     pub fn delete(&mut self, key: &[u8]) {
         match self.write_handler.write(key, &[]) {
             Ok(_) => {
-                self.key_dir.remove(key);
+                self.key_dir.write().expect("Mutex Poisoned").remove(key);
             },
             Err(e) => {
                 // TODO count write failure rate and act
@@ -104,10 +111,15 @@ where
     }
 
     pub fn list_keys(&self) -> Vec<Vec<u8>> {
-        self.key_dir.keys()
+        self.key_dir.read().expect("mutex poisoned").keys().cloned().collect()
     }
 
     pub fn sync(&self) {
         unimplemented!()
     }
+
+    fn file_id(&self) -> usize {
+        self.write_handler.file_id()
+    }
 }
+

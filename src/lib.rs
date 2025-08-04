@@ -1,11 +1,12 @@
+use std::fs::{File, OpenOptions};
+use std::io;
 use std::path::PathBuf;
 
-mod fs_reader;
-mod fs_writer;
-pub mod keydir;
 mod merge;
 mod metrics;
 mod storage;
+mod reader;
+mod writer;
 
 #[derive(Debug, Clone)]
 pub struct EngineOptions {
@@ -21,6 +22,9 @@ pub struct EngineOptions {
     pub data_file_max_size: usize,
     pub key_max_size: usize,
     pub value_max_size: usize,
+    /// The writer handler needs to make sure data files are only opened by one process. The lock
+    /// file makes sure to enforce that.
+    pub writer_lock_file_name: String,
 }
 
 impl Default for EngineOptions {
@@ -31,6 +35,7 @@ impl Default for EngineOptions {
             data_file_max_size: 1024 * 1024 * 128, // 128 MB
             key_max_size: 1024,                    // 1 KB
             value_max_size: 1024 * 1024,           // 1 MB
+            writer_lock_file_name: "writer.lock".to_string(),
         }
     }
 }
@@ -40,4 +45,36 @@ pub(crate) fn current_time_millis() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as u64
+}
+
+pub struct FileWithOffset {
+    pub file: File,
+    pub offset: usize,
+}
+
+impl FileWithOffset {
+    pub fn new(file: File, offset: usize) -> Self {
+        Self { file, offset }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct InMemoryEntry {
+    pub file_id: usize,
+    pub value_size: usize,
+    pub value_offset: usize,
+    pub timestamp: u64,
+}
+
+pub (crate) fn create_active_file(options: &EngineOptions, file_id: usize) -> io::Result<File> {
+    let data_file_path = options
+        .data_path
+        .join(format!("{file_id:06}.data"));
+    let data_file = OpenOptions::new()
+        .read(true)
+        .append(true)
+        .create(true)
+        .open(&data_file_path)?;
+    tracing::debug!("opened initial data file at {:?}", data_file_path);
+    Ok(data_file)
 }
