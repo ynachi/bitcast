@@ -50,17 +50,17 @@ impl Engine
 
     pub fn put(&mut self, key: &[u8], value: &[u8])  {
         match self.write_handler.write(key, value) {
-            Ok(((offset, file_id), file)) => {
+            Ok(w_result) => {
                 let entry = InMemoryEntry {
-                    file_id,
+                    file_id: w_result.written_file_id,
                     value_size: value.len(),
-                    value_offset: offset,
+                    value_offset: w_result.write_offset,
                     timestamp: current_time_millis(),
                 };
                 self.key_dir.write().expect("Mutex Poisoned").insert(Vec::from(key), entry);
 
-                // should we rotate the active file?
-                if let Some((file, file_id)) = file {
+                // If there is a new active file, add it to the ro data file cache
+                if let Some((file, file_id)) = w_result.new_active_file {
                     self.data_files.write().expect("mutex poisoned").insert(file_id, file.into());
                 }
             },
@@ -73,7 +73,7 @@ impl Engine
     }
 
     pub fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
-        // entry is cheap to clone
+        // entry is inexpensive to clone
         let entry = self.key_dir.read().expect("mutex poisoned").get(key).cloned()?;
         let file_id = entry.file_id;
         debug!(

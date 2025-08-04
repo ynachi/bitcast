@@ -11,7 +11,6 @@ pub struct WriteHandler {
     // we have to maintain the offset manually because
     // entries need that information
     pub active_file: Arc<Mutex<FileWithOffset>>,
-    // TODO use me for multiprocess lock on data files
     lock_file: File,
     engine_options: EngineOptions,
     pub active_file_id: AtomicUsize,
@@ -38,9 +37,18 @@ fn build_entry_buffer(key: &[u8], value: &[u8], timestamp: u64, buffer: &mut Vec
     buffer[0..4].copy_from_slice(&crc.to_le_bytes());
 }
 
+pub(crate) struct FileWriteResult {
+    /// offset of the written data
+    pub(crate) write_offset: usize,
+    /// File to which the data was written to
+    pub(crate) written_file_id: usize,
+    /// If rotation happened, FD and ID of the new file
+    pub(crate) new_active_file: Option<(File, usize)>,
+}
+
 impl WriteHandler  {
     // returns (entry offset, file_id), Maybe (New file FD, new file ID)
-    pub(crate) fn write(&mut self, key: &[u8], value: &[u8]) -> io::Result<((usize, usize), Option<(File, usize)>)> {
+    pub(crate) fn write(&mut self, key: &[u8], value: &[u8]) -> io::Result<FileWriteResult> {
         let key_size = key.len();
         if key_size > self.engine_options.key_max_size {
             return Err(io::Error::new(
@@ -58,7 +66,7 @@ impl WriteHandler  {
 
         let timestamp = current_time_millis();
 
-        // 4 for CRC + 8 for key_size, + sizeof key, + 8 + sizeof data, + 8 for timestamp + 8 bits for checksum
+        // 4 for CRC + 8 for key_size, + sizeof key, + 8 + sizeof data, + 8 for timestamp + 32 bits for checksum
         let entry_size = 4 + 8 + key_size + 8 + data_size + 8;
         let mut entry_buffer = Vec::with_capacity(entry_size);
 
@@ -77,15 +85,15 @@ impl WriteHandler  {
         let curr_file_id = self.file_id();
         let maybe_new_file = self.maybe_rotate_active_file(&mut guard, curr_file_id)?;
 
-        Ok(((current_offset, curr_file_id), maybe_new_file))
+        Ok(FileWriteResult{
+            write_offset: current_offset,
+            written_file_id: curr_file_id,
+            new_active_file: maybe_new_file,
+        })
     }
 
     pub(crate) fn file_id(&self) -> usize {
         self.active_file_id.load(Ordering::Acquire)
-    }
-
-    pub(crate) fn increase_active_file_id(&self, to_add: usize) {
-        self.active_file_id.fetch_add(to_add, Ordering::Release);
     }
 
     /// Creates a new mutex file writer, returning the writer along with the FD
@@ -131,11 +139,16 @@ impl WriteHandler  {
         }
         Ok(None)
     }
+
+    /// write in batch to implement, for performance
+    pub fn write_batch(&mut self, entries: &[(Vec<u8>, Vec<u8>)]) -> io::Result<Vec<FileWriteResult>> {
+        unimplemented!()
+    }
 }
 
 impl Drop for WriteHandler {
     fn drop(&mut self) {
-        let lock_file_path = self.engine_options.data_path.join("write.lock");
+        let lock_file_path = self.engine_options.data_path.join(&self.engine_options.writer_lock_file_name);
         remove_file(lock_file_path)
             .unwrap_or_else(|e| error!("Failed to remove lock file: {}", e));
 
@@ -149,9 +162,6 @@ impl Drop for WriteHandler {
             Err(e) => error!("failed to lock active file mutex: {}", e),
         };
 
-        if let Err(e) = self.active_file.lock().unwrap().file.sync_all() {
-            error!("Failed to sync active file: {}", e);
-        }
         debug!("MutexFileWriter dropped, lock file and active file closed.");
     }
 }
@@ -177,13 +187,13 @@ mod tests {
         let (mut writer, _) = WriteHandler::create(engine_options.clone(), 0).unwrap();
 
         // check if the written data matches what is expected
-        let ((cursor, file_id), _) = writer.write(b"key", b"value").unwrap();
+        let result = writer.write(b"key", b"value").unwrap();
         let mut file = File::open(engine_options.data_path.join("000000.data")).unwrap();
         let mut data = Vec::with_capacity(36);
         let line = file.read_to_end(&mut data).unwrap();
-        assert_eq!(cursor, 0);
+        assert_eq!(result.write_offset, 0);
         assert_eq!(line, 36);
-        assert_eq!(file_id, 0);
+        assert_eq!(result.written_file_id, 0);
 
         // check key size is well written
         assert_eq!(u64::from_le_bytes(data[12..20].try_into().unwrap()), 3);
@@ -204,33 +214,33 @@ mod tests {
         assert!(WriteHandler::create(engine_options.clone(), 0).is_err());
 
         // let's write again and check that cursor move and no rotation
-        let ((cursor, file_id), file) = writer.write(b"key", b"value").unwrap();
-        assert_eq!(cursor, 36);
-        assert!(file.is_none());
-        assert_eq!(file_id, 0);
+        let result = writer.write(b"key", b"value").unwrap();
+        assert_eq!(result.write_offset, 36);
+        assert!(result.new_active_file.is_none());
+        assert_eq!(result.written_file_id, 0);
 
         // check that rotation happens when we write more than data_file_max_size == 80
-        // actual written == 36 * 3. Rotation happens here, but the entry was written to the
+        // actually written == 36 * 3. Rotation happens here, but the entry was written to the
         // previous file so the offset and file id of the written data should be from the previous
         // file.
-        let ((cursor, file_id), file) = writer.write(b"key", b"value").unwrap();
-        assert_eq!(cursor, 72);
-        assert!(file.is_some());
-        assert_eq!(file_id, 0);
+        let result = writer.write(b"key", b"value").unwrap();
+        assert_eq!(result.write_offset, 72);
+        assert!(result.new_active_file.is_some());
+        assert_eq!(result.written_file_id, 0);
         // check that the active file has changed
         assert_eq!(writer.file_id(), 1);
 
         // check that we can write to the new active file
         // check if the written data matches what is expected
-        let ((cursor, file_id), _) = writer.write(b"key", b"value").unwrap();
+        let result = writer.write(b"key", b"value").unwrap();
         let mut file = File::open(engine_options.data_path.join("000001.data")).unwrap();
         let mut data = Vec::with_capacity(36);
         let line = file.read_to_end(&mut data).unwrap();
         // as this is the first read in the new file, the offset of the writen data should come
         // back to 0.
-        assert_eq!(cursor, 0);
+        assert_eq!(result.write_offset, 0);
         assert_eq!(line, 36);
-        assert_eq!(file_id, 1);
+        assert_eq!(result.written_file_id, 1);
 
     }
 
