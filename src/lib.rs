@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 mod merge;
 mod metrics;
-mod storage;
 mod reader;
+mod storage;
 mod writer;
 
 #[derive(Debug, Clone)]
@@ -66,10 +66,8 @@ pub struct InMemoryEntry {
     pub timestamp: u64,
 }
 
-pub (crate) fn create_active_file(options: &EngineOptions, file_id: usize) -> io::Result<File> {
-    let data_file_path = options
-        .data_path
-        .join(format!("{file_id:06}.data"));
+pub(crate) fn create_active_file(options: &EngineOptions, file_id: usize) -> io::Result<File> {
+    let data_file_path = options.data_path.join(format!("{file_id:06}.data"));
     let data_file = OpenOptions::new()
         .read(true)
         .append(true)

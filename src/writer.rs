@@ -1,10 +1,10 @@
-use crate::{create_active_file, current_time_millis, EngineOptions, FileWithOffset};
+use crate::{EngineOptions, FileWithOffset, create_active_file, current_time_millis};
 use crc32fast::Hasher;
 use std::fs::{File, OpenOptions, remove_file};
 use std::io;
 use std::io::Write;
-use std::sync::{Arc, Mutex, MutexGuard};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 use tracing::{debug, error};
 
 pub struct WriteHandler {
@@ -46,7 +46,7 @@ pub(crate) struct FileWriteResult {
     pub(crate) new_active_file: Option<(File, usize)>,
 }
 
-impl WriteHandler  {
+impl WriteHandler {
     // returns (entry offset, file_id), Maybe (New file FD, new file ID)
     pub(crate) fn write(&mut self, key: &[u8], value: &[u8]) -> io::Result<FileWriteResult> {
         let key_size = key.len();
@@ -85,7 +85,7 @@ impl WriteHandler  {
         let curr_file_id = self.file_id();
         let maybe_new_file = self.maybe_rotate_active_file(&mut guard, curr_file_id)?;
 
-        Ok(FileWriteResult{
+        Ok(FileWriteResult {
             write_offset: current_offset,
             written_file_id: curr_file_id,
             new_active_file: maybe_new_file,
@@ -101,7 +101,9 @@ impl WriteHandler  {
     /// typically use it to form a file reader.
     ///
     pub fn create(engine_options: EngineOptions, data_file_id: usize) -> io::Result<(Self, File)> {
-        let lock_file_path = engine_options.data_path.join(&engine_options.writer_lock_file_name);
+        let lock_file_path = engine_options
+            .data_path
+            .join(&engine_options.writer_lock_file_name);
 
         let lock_file = OpenOptions::new()
             .read(true)
@@ -118,19 +120,27 @@ impl WriteHandler  {
         let data_file = create_active_file(&engine_options, data_file_id)?;
         let data_file_clone = data_file.try_clone()?;
 
-        Ok((WriteHandler {
-            active_file: Arc::new(Mutex::new(FileWithOffset::new(data_file, 0))),
-            lock_file,
-            engine_options,
-            active_file_id: AtomicUsize::new(data_file_id),
-        }, data_file_clone))
+        Ok((
+            WriteHandler {
+                active_file: Arc::new(Mutex::new(FileWithOffset::new(data_file, 0))),
+                lock_file,
+                engine_options,
+                active_file_id: AtomicUsize::new(data_file_id),
+            },
+            data_file_clone,
+        ))
     }
 
     /// Opens a new file, mark it as active and returns the FD of the new file
     //We pass the file id to this method unnecessary atomic operations
-    fn maybe_rotate_active_file(&self, guard: &mut MutexGuard<FileWithOffset>, current_active_file_id: usize) -> io::Result<Option<(File, usize)>> {
+    fn maybe_rotate_active_file(
+        &self,
+        guard: &mut MutexGuard<FileWithOffset>,
+        current_active_file_id: usize,
+    ) -> io::Result<Option<(File, usize)>> {
         if guard.offset >= self.engine_options.data_file_max_size {
-            let new_data_file = create_active_file(&self.engine_options, current_active_file_id + 1)?;
+            let new_data_file =
+                create_active_file(&self.engine_options, current_active_file_id + 1)?;
             guard.file.sync_all()?;
             guard.file = new_data_file.try_clone()?;
             guard.offset = 0;
@@ -141,16 +151,21 @@ impl WriteHandler  {
     }
 
     /// write in batch to implement, for performance
-    pub fn write_batch(&mut self, entries: &[(Vec<u8>, Vec<u8>)]) -> io::Result<Vec<FileWriteResult>> {
+    pub fn write_batch(
+        &mut self,
+        entries: &[(Vec<u8>, Vec<u8>)],
+    ) -> io::Result<Vec<FileWriteResult>> {
         unimplemented!()
     }
 }
 
 impl Drop for WriteHandler {
     fn drop(&mut self) {
-        let lock_file_path = self.engine_options.data_path.join(&self.engine_options.writer_lock_file_name);
-        remove_file(lock_file_path)
-            .unwrap_or_else(|e| error!("Failed to remove lock file: {}", e));
+        let lock_file_path = self
+            .engine_options
+            .data_path
+            .join(&self.engine_options.writer_lock_file_name);
+        remove_file(lock_file_path).unwrap_or_else(|e| error!("Failed to remove lock file: {}", e));
 
         match self.active_file.lock() {
             Ok(guard) => {
@@ -241,7 +256,6 @@ mod tests {
         assert_eq!(result.write_offset, 0);
         assert_eq!(line, 36);
         assert_eq!(result.written_file_id, 1);
-
     }
 
     #[test]
