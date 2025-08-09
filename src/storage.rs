@@ -3,9 +3,9 @@ use std::fs::{File, OpenOptions};
 use std::{io, vec};
 use std::io::{BufReader, Read};
 use crate::writer::WriteHandler;
-use crate::{InMemoryEntry, current_time_millis, SharedContext, EngineOptions, hint_path_from_id, get_u32, get_u64, crc_matches};
+use crate::{Entry, current_time_millis, SharedContext, EngineOptions, hint_path_from_id, get_u32, get_u64, crc_matches};
 use std::sync::{Arc, RwLock};
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 use crate::hint::FileHintService;
 use crate::reader::FileReader;
 
@@ -44,7 +44,7 @@ impl Engine {
         option: EngineOptions,
     ) -> io::Result<Self> {
 
-        let key_dir: HashMap<Vec<u8>, InMemoryEntry> = HashMap::new();
+        let key_dir: HashMap<Vec<u8>, Entry> = HashMap::new();
         let data_files = Self::build_data_files(&option)?;
 
         // load data_files
@@ -106,7 +106,7 @@ impl Engine {
     // hint format | timestamp | key_sz | value_sz | value_pos | key |
     //             ---------------------------------------------------
     //              he1 (hint entry part1, fixed size, 8+8+8+8 | he2 (hint entry part2)
-    fn build_key_dir(data_files: &BTreeMap<usize, FileReader>, options: &EngineOptions) -> io::Result<HashMap<Vec<u8>, InMemoryEntry>> {
+    fn build_key_dir(data_files: &BTreeMap<usize, FileReader>, options: &EngineOptions) -> io::Result<HashMap<Vec<u8>, Entry>> {
         let mut key_dir = HashMap::new();
 
         for (id, rd)  in data_files.iter().rev() {
@@ -145,7 +145,7 @@ impl Engine {
     fn parse_hint_file(
         file: File,
         file_id: usize,
-        key_dir: &mut HashMap<Vec<u8>, InMemoryEntry>
+        key_dir: &mut HashMap<Vec<u8>, Entry>
     ) -> io::Result<()> {
         let mut reader = BufReader::new(file);
         let mut header = [0u8; HINT_HEADER_SIZE];
@@ -164,7 +164,7 @@ impl Engine {
                 // now read key data
                 reader.read_exact(&mut key_buf)?;
 
-                let entry = InMemoryEntry{
+                let entry = Entry {
                     file_id,
                     value_size,
                     value_offset,
@@ -182,7 +182,8 @@ impl Engine {
     fn parse_data_file(
         data_files: &BTreeMap<usize, FileReader>,
         file_id: usize,
-        key_dir: &mut HashMap<Vec<u8>, InMemoryEntry>
+        key_dir: &mut HashMap<Vec<u8>, Entry>,
+        engine_options: &EngineOptions,
     ) -> io::Result<()> {
         let reader = data_files.get(&file_id).ok_or_else(||
             io::Error::new(io::ErrorKind::NotFound, format!("data file ID {} not found in data files cache", file_id))
@@ -202,6 +203,14 @@ impl Engine {
             let value_size = get_u32(&header, DATA_VALUE_SIZE_RANGE)?;
             let crc = get_u32(&header, DATA_CRC_RANGE)?;
             let timestamp = get_u64(&header, DATA_TIMESTAMP_RANGE)?;
+            let entry_size = DATA_HEADER_SIZE as u64 + (key_size + value_size) as u64;
+
+            if key_size as usize > engine_options.key_max_size ||  value_size as usize > engine_options.value_max_size{
+                warn!("skipping entry due to large key or value size, key: {} value: {}", key_size, value_size);
+                // skip the whole entry
+                offset += entry_size;
+                continue;
+            }
 
             // now read the rest of the entry (key data and value data)
             data_buff.resize((value_size + key_size) as usize, 0);
@@ -209,7 +218,7 @@ impl Engine {
             reader.read_exact_at(&mut data_buff, data_offset)?;
 
             // check crc now
-            crc_data.resize(data_offset as usize, 0);
+            crc_data.clear();
             crc_data.extend_from_slice(&header[4..]);
             crc_data.extend_from_slice(&data_buff);
 
@@ -218,7 +227,7 @@ impl Engine {
             if crc_matches(crc, &*crc_data) {
                 // skip deleted entries, which are represented by 0 value-sized entries
                 if value_size != 0 {
-                    let entry = InMemoryEntry{
+                    let entry = Entry {
                         file_id,
                         value_size,
                         value_offset: offset + DATA_HEADER_SIZE as u64 + key_size as u64,
@@ -234,7 +243,7 @@ impl Engine {
                 error!("entry data corrupted")
             }
 
-            offset += DATA_HEADER_SIZE as u64 + (key_size + value_size) as u64;
+            offset += entry_size;
         }
     }
 
