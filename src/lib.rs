@@ -1,7 +1,13 @@
+use crate::reader::FileReader;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::PathBuf;
+use std::sync::RwLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use crc32fast::Hasher;
 
+mod hint;
 mod merge;
 mod metrics;
 mod reader;
@@ -50,19 +56,26 @@ pub(crate) fn current_time_millis() -> u64 {
 pub struct FileWithOffset {
     pub file: File,
     pub offset: usize,
+    pub file_id: usize,
 }
 
 impl FileWithOffset {
-    pub fn new(file: File, offset: usize) -> Self {
-        Self { file, offset }
+    pub fn new(file: File, offset: usize, file_id: usize) -> Self {
+        Self {
+            file,
+            offset,
+            file_id,
+        }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct InMemoryEntry {
     pub file_id: usize,
-    pub value_size: usize,
-    pub value_offset: usize,
+    // the following are written to some files; it is better to stick to deterministic types size
+    // u32, u64 instead of usize.
+    pub value_size: u32,
+    pub value_offset: u64,
     pub timestamp: u64,
 }
 
@@ -75,4 +88,75 @@ pub(crate) fn create_active_file(options: &EngineOptions, file_id: usize) -> io:
         .open(&data_file_path)?;
     tracing::debug!("opened initial data file at {:?}", data_file_path);
     Ok(data_file)
+}
+
+pub fn hint_path_from_id(id: usize, options: &EngineOptions) -> PathBuf {
+    options.data_path.join(format!("{id:06}.hint"))
+}
+
+pub struct SharedContext {
+    /// Various configuration options for the engine.
+    options: EngineOptions,
+    /// keydir, as defined in bitsect paper
+    key_dir: RwLock<HashMap<Vec<u8>, InMemoryEntry>>,
+    /// Datafiles is a cache of the opened data files. The key is the file number, and the value is
+    /// a FileReader that allows reading from the file. FileReader can be thought as a file
+    /// descriptor. No ARC because the engine itself would be wrapped in an ARC.
+    data_files: RwLock<BTreeMap<usize, FileReader>>,
+    file_id_allocator: FileIdAllocator,
+}
+
+impl SharedContext {
+    pub fn new(options: EngineOptions, initial_file_id: usize) -> Self {
+        Self {
+            options,
+            key_dir: RwLock::new(HashMap::new()),
+            data_files: RwLock::new(BTreeMap::new()),
+            file_id_allocator: FileIdAllocator::new(initial_file_id),
+        }
+    }
+}
+
+pub struct FileIdAllocator {
+    counter: AtomicUsize,
+}
+impl FileIdAllocator {
+    pub fn new(start: usize) -> Self {
+        Self {
+            counter: AtomicUsize::new(start),
+        }
+    }
+
+    pub fn next(&self) -> usize {
+        self.counter.fetch_add(1, Ordering::Release)
+    }
+
+    pub fn current(&self) -> usize {
+        self.counter.load(Ordering::Acquire)
+    }
+}
+
+#[inline]
+pub(crate) fn get_u64(buf: &[u8], range: std::ops::Range<usize>) -> io::Result<u64> {
+    Ok(u64::from_le_bytes(
+        buf[range]
+            .try_into()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid key size"))?,
+    ))
+}
+
+#[inline]
+pub(crate) fn get_u32(buf: &[u8], range: std::ops::Range<usize>) -> io::Result<u32> {
+    Ok(u32::from_le_bytes(
+        buf[range]
+            .try_into()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid key size"))?,
+    ))
+}
+
+pub(crate) fn crc_matches(prev_crc: u32, data: &[u8]) -> bool {
+    let mut hasher = Hasher::new();
+    hasher.update(data);
+    let crc = hasher.finalize();
+    crc == prev_crc
 }
