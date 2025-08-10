@@ -5,6 +5,7 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use crate::errors::Error::BufToArray;
 
 mod hint;
 mod merge;
@@ -126,7 +127,7 @@ pub struct SharedContext {
     /// Datafiles is a cache of the opened data files. The key is the file number, and the value is
     /// a FileReader that allows reading from the file. FileReader can be thought as a file
     /// descriptor. No ARC because the engine itself would be wrapped in an ARC.
-    data_files: RwLock<BTreeMap<usize, FileReader>>,
+    data_files: RwLock<BTreeMap<usize, FileReader<true>>>,
     file_id_allocator: FileIdAllocator,
 }
 

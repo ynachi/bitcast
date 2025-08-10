@@ -12,6 +12,7 @@ pub enum Error {
     InvalidCRC(usize),
     KeyTooBig(usize, usize),
     ValueTooBig(usize, usize),
+    BufToArray,
 }
 
 impl Display for Error {
@@ -22,6 +23,7 @@ impl Display for Error {
             Error::InvalidCRC(payload_sz) => write!(f, "File reader: invalid CRC, payload size {}", payload_sz),
             Error::KeyTooBig(key_sz, max_sz) => write!(f, "key size {} exceed the maximum allowed {}", key_sz, max_sz),
             Error::ValueTooBig(value_sz, max_sz) => write!(f, "value size {} exceed the maximum allowed {}", value_sz, max_sz),
+            Error::BufToArray => write!(f, "failed to convert a buffer to an array"),
         }
     }
 }

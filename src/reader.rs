@@ -1,6 +1,6 @@
 use crate::errors::Error;
 use crate::errors::Error::{InvalidCRC, KeyTooBig, ValueTooBig};
-use crate::{errors::Result, ByteRange, EngineOptions, EntryRef, DATA_CRC_SIZE};
+use crate::{errors::Result, ByteRange, EngineOptions, EntryRef, DATA_CRC_SIZE, HINT_HEADER_SIZE, HINT_KEY_SIZE_RANGE, HINT_TIMESTAMP_RANGE, HINT_VALUE_SIZE_RANGE};
 use crc32fast::Hasher;
 use memmap2::Mmap;
 use std::fs::OpenOptions;
@@ -24,6 +24,20 @@ pub struct ReaderOptions {
     pub value_size_range: ByteRange,
     pub timestamp_range: ByteRange,
     pub crc_range: ByteRange,
+}
+
+impl Default for ReaderOptions {
+    // the default is for Hint file parsing
+    fn default() -> Self {
+        Self {
+            header_size: HINT_HEADER_SIZE,
+            key_size_range: ByteRange { start: HINT_KEY_SIZE_RANGE.start, end: HINT_KEY_SIZE_RANGE.end },
+            value_size_range: ByteRange { start: HINT_VALUE_SIZE_RANGE.start, end: HINT_VALUE_SIZE_RANGE.end },
+            timestamp_range: ByteRange { start: HINT_TIMESTAMP_RANGE.start, end: HINT_TIMESTAMP_RANGE.end },
+            crc_range: ByteRange { start: 0, end: 0 },
+        }
+
+    }
 }
 
 impl<const VERIFY_CRC: bool> FileReader<VERIFY_CRC> {
