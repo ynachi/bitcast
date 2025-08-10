@@ -1,6 +1,6 @@
 use crate::errors::Error;
 use crate::errors::Error::{InvalidCRC, KeyTooBig, ValueTooBig};
-use crate::{errors::Result, ByteRange, EngineOptions, EntryRef, DATA_CRC_SIZE, HINT_HEADER_SIZE, HINT_KEY_SIZE_RANGE, HINT_TIMESTAMP_RANGE, HINT_VALUE_SIZE_RANGE};
+use crate::{errors::Result, ByteRange, EngineOptions, Entry, EntryRef, DATA_CRC_SIZE, HINT_HEADER_SIZE, HINT_KEY_SIZE_RANGE, HINT_TIMESTAMP_RANGE, HINT_VALUE_SIZE_RANGE};
 use crc32fast::Hasher;
 use memmap2::Mmap;
 use std::fs::OpenOptions;
@@ -108,13 +108,18 @@ impl<const VERIFY_CRC: bool> FileReader<VERIFY_CRC> {
         let value_offset = (offset + self.reader_options.header_size + key_size) as u64;
 
         Ok(EntryRef {
-            valid: true,
             key,
             value_size,
             value_offset,
             timestamp: self.reader_options.timestamp_range.get_u64(header),
             data_size: data_size as u64,
+            file_id: self.file_id,
         })
+    }
+
+    pub fn parse_entry_at(&self, offset: usize) -> Result<Entry> {
+        let entry_ref = self.parse_entry_ref_at(offset)?;
+        Ok(entry_ref.into())
     }
 }
 

@@ -82,9 +82,6 @@ impl FileWithOffset {
 }
 
 pub struct EntryRef<'a> {
-    // the valid field is needed because we want to be able to skip non valid entries
-    // without throwing an error.
-    pub valid: bool,
     pub key: &'a [u8],
     pub value_size: u32,
     pub value_offset: u64,
@@ -92,16 +89,28 @@ pub struct EntryRef<'a> {
     // data_size will be useful to the caller to skip part of the underlined I/O
     // It represents the part of the entry which is of variable lenght
     pub data_size: u64,
+    pub file_id: u64,
 }
 
 #[derive(Debug, Clone)]
 pub struct Entry {
-    pub file_id: usize,
+    pub file_id: u64,
     // the following are written to some files; it is better to stick to deterministic types size
     // u32, u64 instead of usize.
     pub value_size: u32,
     pub value_offset: u64,
     pub timestamp: u64,
+}
+
+impl From<EntryRef<'_>> for Entry {
+    fn from(e: EntryRef) -> Self {
+        Entry {
+            file_id: e.file_id,
+            value_size: e.value_size,
+            value_offset: e.value_offset,
+            timestamp: e.timestamp,
+        }
+    }
 }
 
 pub(crate) fn create_active_file(options: &EngineOptions, file_id: usize) -> io::Result<File> {
