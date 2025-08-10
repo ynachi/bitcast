@@ -1,4 +1,4 @@
-use crate::reader::FileReader;
+pub use crate::reader::FileReader;
 use std::collections::{BTreeMap, HashMap};
 use std::fs::{File, OpenOptions};
 use std::io;
@@ -13,18 +13,19 @@ mod metrics;
 mod reader;
 mod storage;
 mod writer;
+pub use crate::reader::ReaderOptions;
 
 // ------------------- General consts ------------------------
 //data [CRC:4][key_size:4][value_size:4][timestamp:8][key][value]
 //hint [key_size:4][value_size:4][timestamp:8][value_offset][key]
-const HINT_HEADER_SIZE: usize = 24;
-const HINT_KEY_SIZE_RANGE: std::ops::Range<usize> = 0..4;
+pub const HINT_HEADER_SIZE: usize = 24;
+pub const HINT_KEY_SIZE_RANGE: std::ops::Range<usize> = 0..4;
 const HINT_VALUE_SIZE_RANGE: std::ops::Range<usize> = 4..8;
 const HINT_TIMESTAMP_RANGE: std::ops::Range<usize> = 8..16;
 const HINT_VALUE_POS_RANGE: std::ops::Range<usize> = 16..24;
 const HINT_AVERAGE_KEY_SIZE: usize = 256;
 
-const DATA_CRC_SIZE: usize = 4;
+pub const DATA_CRC_SIZE: usize = 4;
 
 const DATA_HEADER_SIZE: usize = 20;
 const DATA_CRC_RANGE:  std::ops::Range<usize> = 0..4;
@@ -179,7 +180,7 @@ impl FileIdAllocator {
 
 #[derive(Debug, Clone, Copy)]
 // std::opts::Range does not implement copy, so let's use our own
-pub(crate) struct ByteRange {
+pub struct ByteRange {
     pub start: usize,
     pub end: usize,
 }

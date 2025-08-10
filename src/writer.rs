@@ -9,7 +9,7 @@
 // use std::sync::{Arc, Mutex, MutexGuard};
 // use tracing::{debug, error};
 // use crate::reader::FileReader;
-//
+// 
 // pub struct WriteHandler {
 //     ctx: Arc<SharedContext>,
 //     // we have to maintain the offset manually because
@@ -18,11 +18,11 @@
 //     lock_file: File,
 //     hint_service: FileHintService,
 // }
-//
+// 
 // fn build_entry_buffer(key: &[u8], value: &[u8], timestamp: u64, buffer: &mut Vec<u8>) {
 //     let key_size = key.len();
 //     let data_size = value.len();
-//
+// 
 //     // Placeholder for CRC
 //     buffer.extend_from_slice(&[0u8; 4]);
 //     buffer.extend_from_slice(&timestamp.to_le_bytes());
@@ -30,16 +30,16 @@
 //     buffer.extend_from_slice(&(data_size as u32).to_le_bytes());
 //     buffer.extend_from_slice(key);
 //     buffer.extend_from_slice(value);
-//
+// 
 //     // Compute CRC over everything except the first 4 bytes
 //     let mut hasher = Hasher::new();
 //     hasher.update(&buffer[4..]);
 //     let crc = hasher.finalize();
-//
+// 
 //     // Write CRC into the first 4 bytes
 //     buffer[0..4].copy_from_slice(&crc.to_le_bytes());
 // }
-//
+// 
 // pub(crate) struct FileWriteResult {
 //     /// offset of the written data
 //     pub(crate) write_offset: usize,
@@ -48,7 +48,7 @@
 //     /// If rotation happened, FD and ID of the new file
 //     pub(crate) new_active_file: Option<(File, usize)>,
 // }
-//
+// 
 // impl WriteHandler {
 //     // returns (entry offset, file_id), Maybe (New file FD, new file ID)
 //     pub(crate) fn write(&mut self, key: &[u8], value: &[u8]) -> io::Result<FileWriteResult> {
@@ -66,34 +66,34 @@
 //                 "Value size exceeds maximum allowed size",
 //             ));
 //         }
-//
+// 
 //         let timestamp = current_time_millis();
-//
+// 
 //         // 4 for CRC + 8 for key_size, + sizeof key, + 8 + sizeof data, + 8 for timestamp + 32 bits for checksum
 //         let entry_size = 4 + 8 + key_size + 8 + data_size + 8;
 //         let mut entry_buffer = Vec::with_capacity(entry_size);
-//
+// 
 //         build_entry_buffer(key, value, timestamp, &mut entry_buffer);
-//
+// 
 //         let mut guard = self.active_file.lock().expect("mutex lock poisoned");
-//
+// 
 //         guard.file.write_all(&entry_buffer)?;
 //         guard.file.flush()?;
 //         // the current offset will be the offset of the entry we are inserting, save before
 //         // mutation
 //         let current_offset = guard.offset;
 //         guard.offset += entry_size;
-//
+// 
 //         // should we rotate?
 //         let maybe_new_file = self.maybe_rotate_active_file(&mut guard)?;
-//
+// 
 //         Ok(FileWriteResult {
 //             write_offset: current_offset,
 //             written_file_id: self.ctx.file_id_allocator.current(),
 //             new_active_file: maybe_new_file,
 //         })
 //     }
-//
+// 
 //     /// Creates a new mutex file writer, returning the writer along with the FD
 //     /// of the underlined file. We need to return that FD because the caller would
 //     /// typically use it to form a file reader.
@@ -106,7 +106,7 @@
 //         let lock_file_path = &ctx.options
 //             .data_path
 //             .join(&ctx.options.writer_lock_file_name);
-//
+// 
 //         let lock_file = OpenOptions::new()
 //             .read(true)
 //             .append(true)
@@ -118,18 +118,18 @@
 //             "lock successfully acquired, created lock file at {:?}",
 //             lock_file_path
 //         );
-//
+// 
 //         let data_file = create_active_file(&ctx.options, initial_active_file_id)?;
-//
+// 
 //         // add the newly created file to the opened file cache
 //         let cloned_data_file = data_file.try_clone()?;
 //         let reader = FileReader::from(cloned_data_file);
-//
+// 
 //         {
 //             let mut guard = ctx.data_files.write().expect("mutex lock poisoned");
 //             guard.insert(initial_active_file_id, reader);
 //         }
-//
+// 
 //         Ok(WriteHandler {
 //             ctx,
 //             active_file: Arc::new(Mutex::new(FileWithOffset::new(data_file, 0, initial_active_file_id))),
@@ -137,7 +137,7 @@
 //             hint_service: file_hint_service,
 //         })
 //     }
-//
+// 
 //     /// Opens a new file, mark it as active and returns the FD of the new file
 //     //We pass the file id to this method unnecessary atomic operations
 //     fn maybe_rotate_active_file(
@@ -155,19 +155,19 @@
 //             guard.file.sync_all()?;
 //             guard.file = new_data_file.try_clone()?;
 //             guard.offset = 0;
-//
+// 
 //             // TODO: Manage error
 //             // send file hint creation order
 //             self.hint_service
 //                 .sender
 //                 .send(HintMessage::Hint(active_file_id))
 //                 .unwrap();
-//
+// 
 //             return Ok(Some((new_data_file, new_file_id)));
 //         }
 //         Ok(None)
 //     }
-//
+// 
 //     /// write in batch to implement, for performance
 //     pub fn write_batch(
 //         &mut self,
@@ -176,19 +176,19 @@
 //         unimplemented!()
 //     }
 // }
-//
+// 
 // impl Drop for WriteHandler {
 //     fn drop(&mut self) {
 //         // Ask the hint service thread to stop
 //         self.hint_service.sender.send(HintMessage::Stop).unwrap();
-//
+// 
 //         let lock_file_path = self
 //             .ctx
 //             .options
 //             .data_path
 //             .join(&self.ctx.options.writer_lock_file_name);
 //         remove_file(lock_file_path).unwrap_or_else(|e| error!("Failed to remove lock file: {}", e));
-//
+// 
 //         match self.active_file.lock() {
 //             Ok(guard) => {
 //                 guard
@@ -198,7 +198,7 @@
 //             }
 //             Err(e) => error!("failed to lock active file mutex: {}", e),
 //         };
-//
+// 
 //         debug!("MutexFileWriter dropped, lock file and active file closed.");
 //     }
 // }
