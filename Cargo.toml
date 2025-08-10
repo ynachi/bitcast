@@ -8,6 +8,7 @@ edition = "2024"
 [dependencies]
 tracing = "0"
 crc32fast = "1"
+crc32c = "0"
 memmap2 = "0"
 
 [dev-dependencies]

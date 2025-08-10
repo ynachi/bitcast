@@ -5,6 +5,7 @@ use crate::{
     HINT_KEY_SIZE_RANGE, HINT_TIMESTAMP_RANGE, HINT_VALUE_SIZE_RANGE, errors::Result,
 };
 use crc32fast::Hasher;
+use crc32c::crc32c;
 use memmap2::Mmap;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
@@ -72,6 +73,18 @@ impl<const VERIFY_CRC: bool> FileReader<VERIFY_CRC> {
         hasher.update(self.read_at(payload_start_idx, payload_len)?);
         let crc = hasher.finalize();
         Ok(crc == old_crc)
+    }
+
+    // TODO: use me instead of software based CRC
+    fn crc_ok_hardware(&self, offset: usize, data_size: usize) -> Result<bool> {
+        let old_crc = self.reader_options.crc_range.get_u32(self.read_at(offset, 4)?);
+        let payload_start_idx = offset + 4;
+        let payload_len = self.reader_options.header_size + data_size - 4;
+        let data = self.read_at(payload_start_idx, payload_len)?;
+
+        // Hardware-accelerated CRC32C
+        let computed_crc = crc32c(data);
+        Ok(computed_crc == old_crc)
     }
 
     pub fn open(
