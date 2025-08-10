@@ -19,10 +19,24 @@ impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Error::Io(err) => write!(f, "IO error: {}", err),
-            Error::MmapReadOverflow(read_sz, file_sz, offset) => write!(f, "File reader: read size {} exceed file size {} offset {}", read_sz, file_sz, offset),
-            Error::InvalidCRC(payload_sz) => write!(f, "File reader: invalid CRC, payload size {}", payload_sz),
-            Error::KeyTooBig(key_sz, max_sz) => write!(f, "key size {} exceed the maximum allowed {}", key_sz, max_sz),
-            Error::ValueTooBig(value_sz, max_sz) => write!(f, "value size {} exceed the maximum allowed {}", value_sz, max_sz),
+            Error::MmapReadOverflow(read_sz, file_sz, offset) => write!(
+                f,
+                "File reader: read size {} exceed file size {} offset {}",
+                read_sz, file_sz, offset
+            ),
+            Error::InvalidCRC(payload_sz) => {
+                write!(f, "File reader: invalid CRC, payload size {}", payload_sz)
+            }
+            Error::KeyTooBig(key_sz, max_sz) => write!(
+                f,
+                "key size {} exceed the maximum allowed {}",
+                key_sz, max_sz
+            ),
+            Error::ValueTooBig(value_sz, max_sz) => write!(
+                f,
+                "value size {} exceed the maximum allowed {}",
+                value_sz, max_sz
+            ),
             Error::BufToArray => write!(f, "failed to convert a buffer to an array"),
         }
     }

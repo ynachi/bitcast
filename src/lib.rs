@@ -5,25 +5,32 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use crate::errors::Error::BufToArray;
 
+mod errors;
 mod hint;
 mod merge;
 mod metrics;
 mod reader;
 mod storage;
 mod writer;
-mod errors;
 
 // ------------------- General consts ------------------------
+//data [CRC:4][key_size:4][value_size:4][timestamp:8][key][value]
+//hint [key_size:4][value_size:4][timestamp:8][value_offset][key]
 const HINT_HEADER_SIZE: usize = 24;
-const HINT_TIMESTAMP_RANGE: std::ops::Range<usize> = 0..8;
-const HINT_KEY_SIZE_RANGE: std::ops::Range<usize> = 8..12;
-const HINT_VALUE_SIZE_RANGE: std::ops::Range<usize> = 12..16;
+const HINT_KEY_SIZE_RANGE: std::ops::Range<usize> = 0..4;
+const HINT_VALUE_SIZE_RANGE: std::ops::Range<usize> = 4..8;
+const HINT_TIMESTAMP_RANGE: std::ops::Range<usize> = 8..16;
 const HINT_VALUE_POS_RANGE: std::ops::Range<usize> = 16..24;
 const HINT_AVERAGE_KEY_SIZE: usize = 256;
 
 const DATA_CRC_SIZE: usize = 4;
+
+const DATA_HEADER_SIZE: usize = 20;
+const DATA_CRC_RANGE:  std::ops::Range<usize> = 0..4;
+const DATA_KEY_SIZE_RANGE: std::ops::Range<usize> = 4..8;
+const DATA_VALUE_SIZE_RANGE: std::ops::Range<usize> = 8..12;
+const DATA_TIMESTAMP_RANGE: std::ops::Range<usize> = 12..20;
 // -------------------- General Consts end -------------------
 
 #[derive(Debug, Clone)]
