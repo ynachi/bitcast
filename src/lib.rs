@@ -1,18 +1,38 @@
-use crate::reader::FileReader;
+pub use crate::reader::FileReader;
 use std::collections::{BTreeMap, HashMap};
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::PathBuf;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use crc32fast::Hasher;
 
+mod errors;
 mod hint;
 mod merge;
 mod metrics;
 mod reader;
 mod storage;
 mod writer;
+pub use crate::reader::ReaderOptions;
+
+// ------------------- General consts ------------------------
+//data [CRC:4][key_size:4][value_size:4][timestamp:8][key][value]
+//hint [key_size:4][value_size:4][timestamp:8][value_offset][key]
+pub const HINT_HEADER_SIZE: usize = 24;
+pub const HINT_KEY_SIZE_RANGE: std::ops::Range<usize> = 0..4;
+const HINT_VALUE_SIZE_RANGE: std::ops::Range<usize> = 4..8;
+const HINT_TIMESTAMP_RANGE: std::ops::Range<usize> = 8..16;
+const HINT_VALUE_POS_RANGE: std::ops::Range<usize> = 16..24;
+const HINT_AVERAGE_KEY_SIZE: usize = 256;
+
+pub const DATA_CRC_SIZE: usize = 4;
+
+const DATA_HEADER_SIZE: usize = 20;
+const DATA_CRC_RANGE:  std::ops::Range<usize> = 0..4;
+const DATA_KEY_SIZE_RANGE: std::ops::Range<usize> = 4..8;
+const DATA_VALUE_SIZE_RANGE: std::ops::Range<usize> = 8..12;
+const DATA_TIMESTAMP_RANGE: std::ops::Range<usize> = 12..20;
+// -------------------- General Consts end -------------------
 
 #[derive(Debug, Clone)]
 pub struct EngineOptions {
@@ -69,14 +89,36 @@ impl FileWithOffset {
     }
 }
 
+pub struct EntryRef<'a> {
+    pub key: &'a [u8],
+    pub value_size: u32,
+    pub value_offset: u64,
+    pub timestamp: u64,
+    // data_size will be useful to the caller to skip part of the underlined I/O
+    // It represents the part of the entry which is of variable lenght
+    pub data_size: u64,
+    pub file_id: u64,
+}
+
 #[derive(Debug, Clone)]
-pub struct InMemoryEntry {
-    pub file_id: usize,
+pub struct Entry {
+    pub file_id: u64,
     // the following are written to some files; it is better to stick to deterministic types size
     // u32, u64 instead of usize.
     pub value_size: u32,
     pub value_offset: u64,
     pub timestamp: u64,
+}
+
+impl From<EntryRef<'_>> for Entry {
+    fn from(e: EntryRef) -> Self {
+        Entry {
+            file_id: e.file_id,
+            value_size: e.value_size,
+            value_offset: e.value_offset,
+            timestamp: e.timestamp,
+        }
+    }
 }
 
 pub(crate) fn create_active_file(options: &EngineOptions, file_id: usize) -> io::Result<File> {
@@ -98,11 +140,11 @@ pub struct SharedContext {
     /// Various configuration options for the engine.
     options: EngineOptions,
     /// keydir, as defined in bitsect paper
-    key_dir: RwLock<HashMap<Vec<u8>, InMemoryEntry>>,
+    key_dir: RwLock<HashMap<Vec<u8>, Entry>>,
     /// Datafiles is a cache of the opened data files. The key is the file number, and the value is
     /// a FileReader that allows reading from the file. FileReader can be thought as a file
     /// descriptor. No ARC because the engine itself would be wrapped in an ARC.
-    data_files: RwLock<BTreeMap<usize, FileReader>>,
+    data_files: RwLock<BTreeMap<usize, FileReader<true>>>,
     file_id_allocator: FileIdAllocator,
 }
 
@@ -136,27 +178,28 @@ impl FileIdAllocator {
     }
 }
 
-#[inline]
-pub(crate) fn get_u64(buf: &[u8], range: std::ops::Range<usize>) -> io::Result<u64> {
-    Ok(u64::from_le_bytes(
-        buf[range]
-            .try_into()
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid key size"))?,
-    ))
+#[derive(Debug, Clone, Copy)]
+// std::opts::Range does not implement copy, so let's use our own
+pub struct ByteRange {
+    pub start: usize,
+    pub end: usize,
 }
 
-#[inline]
-pub(crate) fn get_u32(buf: &[u8], range: std::ops::Range<usize>) -> io::Result<u32> {
-    Ok(u32::from_le_bytes(
-        buf[range]
-            .try_into()
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid key size"))?,
-    ))
-}
+impl ByteRange {
+    #[inline]
+    pub(crate) fn slice<'a>(&self, data: &'a [u8]) -> &'a [u8] {
+        &data[self.start..self.end]
+    }
 
-pub(crate) fn crc_matches(prev_crc: u32, data: &[u8]) -> bool {
-    let mut hasher = Hasher::new();
-    hasher.update(data);
-    let crc = hasher.finalize();
-    crc == prev_crc
+    #[inline]
+    /// warning, parse error is not checked
+    pub(crate) fn get_u64(&self, buf: &[u8]) -> u64 {
+        u64::from_le_bytes(self.slice(buf).try_into().unwrap())
+    }
+
+    #[inline]
+    /// warning, parse error is not checked
+    pub(crate) fn get_u32(&self, buf: &[u8]) -> u32 {
+        u32::from_le_bytes(self.slice(buf).try_into().unwrap())
+    }
 }
