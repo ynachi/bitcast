@@ -4,11 +4,11 @@ use crate::{
     ByteRange, DATA_CRC_SIZE, EngineOptions, Entry, EntryRef, HINT_HEADER_SIZE,
     HINT_KEY_SIZE_RANGE, HINT_TIMESTAMP_RANGE, HINT_VALUE_SIZE_RANGE, errors::Result,
 };
-use crc32fast::Hasher;
-use crc32c::crc32c;
 use memmap2::Mmap;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
+use crc_fast::checksum;
+use crc_fast::CrcAlgorithm::Crc32IsoHdlc;
 
 /// mmap-based file reader with opt-in CRC verification when needed
 //data [CRC:4][key_size:4][value_size:4][timestamp:8][key][value]
@@ -69,22 +69,8 @@ impl<const VERIFY_CRC: bool> FileReader<VERIFY_CRC> {
 
         let payload_start_idx = offset + crc_size;
         let payload_len = self.reader_options.header_size + data_size - crc_size;
-        let mut hasher = Hasher::new();
-        hasher.update(self.read_at(payload_start_idx, payload_len)?);
-        let crc = hasher.finalize();
+        let crc = checksum(Crc32IsoHdlc, self.read_at(payload_start_idx, payload_len)?) as u32;
         Ok(crc == old_crc)
-    }
-
-    // TODO: use me instead of software based CRC
-    fn crc_ok_hardware(&self, offset: usize, data_size: usize) -> Result<bool> {
-        let old_crc = self.reader_options.crc_range.get_u32(self.read_at(offset, 4)?);
-        let payload_start_idx = offset + 4;
-        let payload_len = self.reader_options.header_size + data_size - 4;
-        let data = self.read_at(payload_start_idx, payload_len)?;
-
-        // Hardware-accelerated CRC32C
-        let computed_crc = crc32c(data);
-        Ok(computed_crc == old_crc)
     }
 
     pub fn open(
@@ -161,7 +147,6 @@ impl<const VERIFY_CRC: bool> FileReader<VERIFY_CRC> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crc32fast::Hasher;
     use std::fs::{File, OpenOptions};
     use std::io::Write;
     use tempfile::TempDir;
@@ -196,9 +181,7 @@ mod tests {
     }
 
     fn calculate_crc(data: &[u8]) -> u32 {
-        let mut hasher = Hasher::new();
-        hasher.update(data);
-        hasher.finalize()
+        checksum(Crc32IsoHdlc, data) as u32
     }
 
     fn create_test_file(data: &[u8]) -> (TempDir, PathBuf) {
