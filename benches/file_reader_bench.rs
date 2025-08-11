@@ -1,9 +1,9 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use crc_fast::CrcAlgorithm::Crc32IsoHdlc;
+use crc_fast::checksum;
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
-use crc_fast::checksum;
-use crc_fast::CrcAlgorithm::Crc32IsoHdlc;
 use tempfile::TempDir;
 
 // Import your crate items
@@ -78,7 +78,12 @@ fn create_hint_entry(key: &[u8], value_size: u32, timestamp: u64, value_offset: 
     entry
 }
 
-fn create_multi_entry_file(entry_count: usize, key_size: usize, value_size: usize, entry_type: &str) -> (TempDir, PathBuf, Vec<usize>) {
+fn create_multi_entry_file(
+    entry_count: usize,
+    key_size: usize,
+    value_size: usize,
+    entry_type: &str,
+) -> (TempDir, PathBuf, Vec<usize>) {
     let mut file_data = Vec::new();
     let mut offsets = Vec::new();
 
@@ -99,11 +104,14 @@ fn create_multi_entry_file(entry_count: usize, key_size: usize, value_size: usiz
             "data" => {
                 let value = vec![b'v'; value_size];
                 create_data_entry(&padded_key, &value, BENCH_TIMESTAMP)
-            },
-            "hint" => {
-                create_hint_entry(&padded_key, value_size as u32, BENCH_TIMESTAMP, i as u64 * 1000)
-            },
-            _ => panic!("Unknown entry type")
+            }
+            "hint" => create_hint_entry(
+                &padded_key,
+                value_size as u32,
+                BENCH_TIMESTAMP,
+                i as u64 * 1000,
+            ),
+            _ => panic!("Unknown entry type"),
         };
 
         file_data.extend_from_slice(&entry_data);
@@ -118,10 +126,10 @@ fn bench_single_entry_parsing(c: &mut Criterion) {
     let mut group = c.benchmark_group("single_entry_parsing");
 
     let sizes = vec![
-        (16, 64),      // Small
-        (64, 256),     // Medium
-        (256, 1024),   // Large
-        (1024, 4096),  // XL
+        (16, 64),     // Small
+        (64, 256),    // Medium
+        (256, 1024),  // Large
+        (1024, 4096), // XL
     ];
 
     for (key_size, value_size) in sizes {
@@ -136,17 +144,14 @@ fn bench_single_entry_parsing(c: &mut Criterion) {
             BENCH_FILE_ID,
             create_bench_engine_options(),
             create_data_reader_options(),
-        ).unwrap();
+        )
+        .unwrap();
 
         group.throughput(Throughput::Bytes((key_size + value_size) as u64));
         group.bench_with_input(
             BenchmarkId::new("with_crc", format!("{key_size}k_{value_size}v")),
             &(&reader_crc, 0),
-            |b, (reader, offset)| {
-                b.iter(|| {
-                    black_box(reader.parse_entry_ref_at(*offset)).unwrap()
-                })
-            },
+            |b, (reader, offset)| b.iter(|| black_box(reader.parse_entry_ref_at(*offset)).unwrap()),
         );
 
         // Benchmark without CRC verification
@@ -155,16 +160,13 @@ fn bench_single_entry_parsing(c: &mut Criterion) {
             BENCH_FILE_ID,
             create_bench_engine_options(),
             create_data_reader_options(),
-        ).unwrap();
+        )
+        .unwrap();
 
         group.bench_with_input(
             BenchmarkId::new("no_crc", format!("{key_size}k_{value_size}v")),
             &(&reader_no_crc, 0),
-            |b, (reader, offset)| {
-                b.iter(|| {
-                    black_box(reader.parse_entry_ref_at(*offset)).unwrap()
-                })
-            },
+            |b, (reader, offset)| b.iter(|| black_box(reader.parse_entry_ref_at(*offset)).unwrap()),
         );
     }
 
@@ -176,26 +178,31 @@ fn bench_multi_entry_parsing(c: &mut Criterion) {
     let mut group = c.benchmark_group("multi_entry_parsing");
 
     let configs = vec![
-        (100, 32, 128),    // Many small entries
-        (50, 128, 512),    // Medium entries
-        (10, 512, 2048),   // Few large entries
+        (100, 32, 128),  // Many small entries
+        (50, 128, 512),  // Medium entries
+        (10, 512, 2048), // Few large entries
     ];
 
     for (entry_count, key_size, value_size) in configs {
-        let (_temp_dir, file_path, offsets) = create_multi_entry_file(entry_count, key_size, value_size, "data");
+        let (_temp_dir, file_path, offsets) =
+            create_multi_entry_file(entry_count, key_size, value_size, "data");
 
         let reader = FileReader::<true>::open(
             &file_path,
             BENCH_FILE_ID,
             create_bench_engine_options(),
             create_data_reader_options(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let total_size = (entry_count * (key_size + value_size)) as u64;
         group.throughput(Throughput::Bytes(total_size));
 
         group.bench_with_input(
-            BenchmarkId::new("sequential_parse", format!("{entry_count}entries_{key_size}k_{value_size}v")),
+            BenchmarkId::new(
+                "sequential_parse",
+                format!("{entry_count}entries_{key_size}k_{value_size}v"),
+            ),
             &(&reader, &offsets),
             |b, (reader, offsets)| {
                 b.iter(|| {
@@ -218,14 +225,16 @@ fn bench_random_access(c: &mut Criterion) {
     let key_size = 64;
     let value_size = 256;
 
-    let (_temp_dir, file_path, offsets) = create_multi_entry_file(entry_count, key_size, value_size, "data");
+    let (_temp_dir, file_path, offsets) =
+        create_multi_entry_file(entry_count, key_size, value_size, "data");
 
     let reader = FileReader::<true>::open(
         &file_path,
         BENCH_FILE_ID,
         create_bench_engine_options(),
         create_data_reader_options(),
-    ).unwrap();
+    )
+    .unwrap();
 
     // Create a random access pattern
     use std::collections::hash_map::DefaultHasher;
@@ -271,35 +280,29 @@ fn bench_crc_overhead(c: &mut Criterion) {
             BENCH_FILE_ID,
             create_bench_engine_options(),
             create_data_reader_options(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let reader_no_crc = FileReader::<false>::open(
             &file_path,
             BENCH_FILE_ID,
             create_bench_engine_options(),
             create_data_reader_options(),
-        ).unwrap();
+        )
+        .unwrap();
 
         group.throughput(Throughput::Bytes(value_size as u64));
 
         group.bench_with_input(
             BenchmarkId::new("with_crc", value_size),
             &value_size,
-            |b, _| {
-                b.iter(|| {
-                    black_box(reader_crc.parse_entry_ref_at(0)).unwrap()
-                })
-            },
+            |b, _| b.iter(|| black_box(reader_crc.parse_entry_ref_at(0)).unwrap()),
         );
 
         group.bench_with_input(
             BenchmarkId::new("without_crc", value_size),
             &value_size,
-            |b, _| {
-                b.iter(|| {
-                    black_box(reader_no_crc.parse_entry_ref_at(0)).unwrap()
-                })
-            },
+            |b, _| b.iter(|| black_box(reader_no_crc.parse_entry_ref_at(0)).unwrap()),
         );
     }
 
@@ -311,26 +314,31 @@ fn bench_hint_parsing(c: &mut Criterion) {
     let mut group = c.benchmark_group("hint_parsing");
 
     let configs = vec![
-        (1000, 32),   // Many small keys
-        (500, 128),   // Medium keys
-        (100, 512),   // Large keys
+        (1000, 32), // Many small keys
+        (500, 128), // Medium keys
+        (100, 512), // Large keys
     ];
 
     for (entry_count, key_size) in configs {
-        let (_temp_dir, file_path, offsets) = create_multi_entry_file(entry_count, key_size, 256, "hint");
+        let (_temp_dir, file_path, offsets) =
+            create_multi_entry_file(entry_count, key_size, 256, "hint");
 
         let reader = FileReader::<false>::open(
             &file_path,
             BENCH_FILE_ID,
             create_bench_engine_options(),
             create_hint_reader_options(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let total_size = (entry_count * key_size) as u64;
         group.throughput(Throughput::Bytes(total_size));
 
         group.bench_with_input(
-            BenchmarkId::new("hint_sequential", format!("{entry_count}entries_{key_size}k")),
+            BenchmarkId::new(
+                "hint_sequential",
+                format!("{entry_count}entries_{key_size}k"),
+            ),
             &(&reader, &offsets),
             |b, (reader, offsets)| {
                 b.iter(|| {
@@ -353,14 +361,16 @@ fn bench_memory_access(c: &mut Criterion) {
     let key_size = 64;
     let value_size = 1024;
 
-    let (_temp_dir, file_path, _) = create_multi_entry_file(entry_count, key_size, value_size, "data");
+    let (_temp_dir, file_path, _) =
+        create_multi_entry_file(entry_count, key_size, value_size, "data");
 
     let reader = FileReader::<false>::open(
         &file_path,
         BENCH_FILE_ID,
         create_bench_engine_options(),
         create_data_reader_options(),
-    ).unwrap();
+    )
+    .unwrap();
 
     // Test different read sizes
     let read_sizes = vec![16, 64, 256, 1024, 4096];
@@ -371,11 +381,7 @@ fn bench_memory_access(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("read_at", read_size),
             &read_size,
-            |b, &size| {
-                b.iter(|| {
-                    black_box(reader.read_at(0, size)).unwrap()
-                })
-            },
+            |b, &size| b.iter(|| black_box(reader.read_at(0, size)).unwrap()),
         );
     }
 
@@ -386,11 +392,7 @@ fn bench_memory_access(c: &mut Criterion) {
 fn bench_entry_conversion(c: &mut Criterion) {
     let mut group = c.benchmark_group("entry_conversion");
 
-    let sizes = vec![
-        (32, 128),
-        (128, 512),
-        (512, 2048),
-    ];
+    let sizes = vec![(32, 128), (128, 512), (512, 2048)];
 
     for (key_size, value_size) in sizes {
         let key = vec![b'k'; key_size];
@@ -403,28 +405,21 @@ fn bench_entry_conversion(c: &mut Criterion) {
             BENCH_FILE_ID,
             create_bench_engine_options(),
             create_data_reader_options(),
-        ).unwrap();
+        )
+        .unwrap();
 
         group.throughput(Throughput::Bytes((key_size + value_size) as u64));
 
         group.bench_with_input(
             BenchmarkId::new("entry_ref", format!("{key_size}k_{value_size}v")),
             &key_size,
-            |b, _| {
-                b.iter(|| {
-                    black_box(reader.parse_entry_ref_at(0)).unwrap()
-                })
-            },
+            |b, _| b.iter(|| black_box(reader.parse_entry_ref_at(0)).unwrap()),
         );
 
         group.bench_with_input(
             BenchmarkId::new("entry_owned", format!("{key_size}k_{value_size}v")),
             &key_size,
-            |b, _| {
-                b.iter(|| {
-                    black_box(reader.parse_entry_at(0)).unwrap()
-                })
-            },
+            |b, _| b.iter(|| black_box(reader.parse_entry_at(0)).unwrap()),
         );
     }
 
@@ -440,7 +435,8 @@ fn bench_concurrent_access(c: &mut Criterion) {
     let key_size = 64;
     let value_size = 256;
 
-    let (_temp_dir, file_path, offsets) = create_multi_entry_file(entry_count, key_size, value_size, "data");
+    let (_temp_dir, file_path, offsets) =
+        create_multi_entry_file(entry_count, key_size, value_size, "data");
 
     // Test different thread counts
     let thread_counts = vec![1, 2, 4, 8];
@@ -454,7 +450,8 @@ fn bench_concurrent_access(c: &mut Criterion) {
                 BENCH_FILE_ID,
                 create_bench_engine_options(),
                 create_data_reader_options(),
-            ).unwrap()
+            )
+            .unwrap(),
         );
 
         let total_operations = thread_count * operations_per_thread;
@@ -498,7 +495,8 @@ fn bench_concurrent_access(c: &mut Criterion) {
                 BENCH_FILE_ID,
                 create_bench_engine_options(),
                 create_data_reader_options(),
-            ).unwrap()
+            )
+            .unwrap(),
         );
 
         group.bench_with_input(
@@ -544,7 +542,8 @@ fn bench_concurrent_patterns(c: &mut Criterion) {
     let thread_count = 4;
     let operations_per_thread = 50;
 
-    let (_temp_dir, file_path, offsets) = create_multi_entry_file(entry_count, key_size, value_size, "data");
+    let (_temp_dir, file_path, offsets) =
+        create_multi_entry_file(entry_count, key_size, value_size, "data");
 
     let reader = std::sync::Arc::new(
         FileReader::<false>::open(
@@ -552,7 +551,8 @@ fn bench_concurrent_patterns(c: &mut Criterion) {
             BENCH_FILE_ID,
             create_bench_engine_options(),
             create_data_reader_options(),
-        ).unwrap()
+        )
+        .unwrap(),
     );
 
     let total_bytes = (thread_count * operations_per_thread * (key_size + value_size)) as u64;
@@ -647,7 +647,6 @@ criterion_group!(
     bench_entry_conversion,
     bench_concurrent_access,
     bench_concurrent_patterns,
-
 );
 
 criterion_main!(benches);

@@ -4,11 +4,11 @@ use crate::{
     ByteRange, DATA_CRC_SIZE, EngineOptions, Entry, EntryRef, HINT_HEADER_SIZE,
     HINT_KEY_SIZE_RANGE, HINT_TIMESTAMP_RANGE, HINT_VALUE_SIZE_RANGE, errors::Result,
 };
+use crc_fast::CrcAlgorithm::Crc32IsoHdlc;
+use crc_fast::checksum;
 use memmap2::Mmap;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
-use crc_fast::checksum;
-use crc_fast::CrcAlgorithm::Crc32IsoHdlc;
 
 /// mmap-based file reader with opt-in CRC verification when needed
 //data [CRC:4][key_size:4][value_size:4][timestamp:8][key][value]
@@ -110,7 +110,7 @@ impl<const VERIFY_CRC: bool> FileReader<VERIFY_CRC> {
 
         // comptime
         if VERIFY_CRC && !self.crc_ok(offset, data_size)? {
-                return Err(InvalidCRC(data_size));
+            return Err(InvalidCRC(data_size));
         }
 
         if key_size > self.engine_options.key_max_size {
@@ -142,15 +142,16 @@ impl<const VERIFY_CRC: bool> FileReader<VERIFY_CRC> {
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        DATA_CRC_RANGE, DATA_HEADER_SIZE, DATA_KEY_SIZE_RANGE, DATA_TIMESTAMP_RANGE,
+        DATA_VALUE_SIZE_RANGE,
+    };
     use std::fs::{File, OpenOptions};
     use std::io::Write;
     use tempfile::TempDir;
-    use crate::{DATA_CRC_RANGE, DATA_HEADER_SIZE, DATA_KEY_SIZE_RANGE, DATA_TIMESTAMP_RANGE, DATA_VALUE_SIZE_RANGE};
 
     // Test constants
     const TEST_KEY_MAX_SIZE: usize = 1024;
@@ -169,10 +170,22 @@ mod tests {
     fn create_data_reader_options() -> ReaderOptions {
         ReaderOptions {
             header_size: DATA_HEADER_SIZE,
-            key_size_range: ByteRange { start: DATA_KEY_SIZE_RANGE.start, end: DATA_KEY_SIZE_RANGE.end},
-            value_size_range: ByteRange { start: DATA_VALUE_SIZE_RANGE.start, end: DATA_VALUE_SIZE_RANGE.end },
-            timestamp_range: ByteRange { start: DATA_TIMESTAMP_RANGE.start, end: DATA_TIMESTAMP_RANGE.end },
-            crc_range: ByteRange { start: DATA_CRC_RANGE.start, end: DATA_CRC_RANGE.end },           // First 4 bytes
+            key_size_range: ByteRange {
+                start: DATA_KEY_SIZE_RANGE.start,
+                end: DATA_KEY_SIZE_RANGE.end,
+            },
+            value_size_range: ByteRange {
+                start: DATA_VALUE_SIZE_RANGE.start,
+                end: DATA_VALUE_SIZE_RANGE.end,
+            },
+            timestamp_range: ByteRange {
+                start: DATA_TIMESTAMP_RANGE.start,
+                end: DATA_TIMESTAMP_RANGE.end,
+            },
+            crc_range: ByteRange {
+                start: DATA_CRC_RANGE.start,
+                end: DATA_CRC_RANGE.end,
+            }, // First 4 bytes
         }
     }
 
@@ -217,7 +230,12 @@ mod tests {
         entry
     }
 
-    fn create_valid_hint_entry(key: &[u8], value_size: u32, timestamp: u64, value_offset: u64) -> Vec<u8> {
+    fn create_valid_hint_entry(
+        key: &[u8],
+        value_size: u32,
+        timestamp: u64,
+        value_offset: u64,
+    ) -> Vec<u8> {
         let mut entry = Vec::new();
         entry.extend_from_slice(&(key.len() as u32).to_le_bytes());
         entry.extend_from_slice(&value_size.to_le_bytes());
@@ -245,7 +263,8 @@ mod tests {
                     TEST_FILE_ID,
                     create_engine_options(),
                     create_data_reader_options(),
-                ).unwrap();
+                )
+                .unwrap();
 
                 let entry_ref = reader.parse_entry_ref_at(0).unwrap();
 
@@ -268,7 +287,8 @@ mod tests {
                     TEST_FILE_ID,
                     create_engine_options(),
                     create_data_reader_options(),
-                ).unwrap();
+                )
+                .unwrap();
 
                 let entry = reader.parse_entry_at(0).unwrap();
                 // Entry should contain owned data converted from EntryRef
@@ -299,7 +319,8 @@ mod tests {
                     TEST_FILE_ID,
                     create_engine_options(),
                     create_data_reader_options(),
-                ).unwrap();
+                )
+                .unwrap();
 
                 for (i, (expected_key, _)) in entries.iter().enumerate() {
                     let entry_ref = reader.parse_entry_ref_at(offsets[i]).unwrap();
@@ -323,7 +344,8 @@ mod tests {
                     TEST_FILE_ID,
                     create_engine_options(),
                     create_data_reader_options(),
-                ).unwrap();
+                )
+                .unwrap();
 
                 // Should succeed with valid CRC
                 let result = reader.parse_entry_ref_at(0);
@@ -342,7 +364,8 @@ mod tests {
                     TEST_FILE_ID,
                     create_engine_options(),
                     create_data_reader_options(),
-                ).unwrap();
+                )
+                .unwrap();
 
                 let result = reader.parse_entry_ref_at(0);
                 assert!(matches!(result, Err(InvalidCRC(_))));
@@ -360,7 +383,8 @@ mod tests {
                     TEST_FILE_ID,
                     create_engine_options(),
                     create_data_reader_options(),
-                ).unwrap();
+                )
+                .unwrap();
 
                 // Should succeed even with invalid CRC when verification is disabled
                 let result = reader.parse_entry_ref_at(0);
@@ -382,10 +406,13 @@ mod tests {
                     TEST_FILE_ID,
                     create_engine_options(),
                     create_data_reader_options(),
-                ).unwrap();
+                )
+                .unwrap();
 
                 let result = reader.parse_entry_ref_at(0);
-                assert!(matches!(result, Err(KeyTooBig(actual, max)) if actual == TEST_KEY_MAX_SIZE + 1 && max == TEST_KEY_MAX_SIZE));
+                assert!(
+                    matches!(result, Err(KeyTooBig(actual, max)) if actual == TEST_KEY_MAX_SIZE + 1 && max == TEST_KEY_MAX_SIZE)
+                );
             }
 
             #[test]
@@ -400,10 +427,13 @@ mod tests {
                     TEST_FILE_ID,
                     create_engine_options(),
                     create_data_reader_options(),
-                ).unwrap();
+                )
+                .unwrap();
 
                 let result = reader.parse_entry_ref_at(0);
-                assert!(matches!(result, Err(ValueTooBig(actual, max)) if actual == TEST_VALUE_MAX_SIZE + 1 && max == TEST_VALUE_MAX_SIZE));
+                assert!(
+                    matches!(result, Err(ValueTooBig(actual, max)) if actual == TEST_VALUE_MAX_SIZE + 1 && max == TEST_VALUE_MAX_SIZE)
+                );
             }
 
             #[test]
@@ -419,7 +449,8 @@ mod tests {
                     TEST_FILE_ID,
                     create_engine_options(),
                     create_data_reader_options(),
-                ).unwrap();
+                )
+                .unwrap();
 
                 let result = reader.parse_entry_ref_at(0);
                 assert!(result.is_ok());
@@ -440,7 +471,8 @@ mod tests {
                     TEST_FILE_ID,
                     create_engine_options(),
                     create_data_reader_options(),
-                ).unwrap();
+                )
+                .unwrap();
 
                 // Try to read beyond the file size
                 let result = reader.read_at(0, entry_data.len() + 1);
@@ -457,7 +489,8 @@ mod tests {
                     TEST_FILE_ID,
                     create_engine_options(),
                     create_data_reader_options(),
-                ).unwrap();
+                )
+                .unwrap();
 
                 let result = reader.parse_entry_ref_at(0);
                 assert!(matches!(result, Err(Error::MmapReadOverflow(_, _, _))));
@@ -479,7 +512,8 @@ mod tests {
                     TEST_FILE_ID,
                     create_engine_options(),
                     create_data_reader_options(),
-                ).unwrap();
+                )
+                .unwrap();
 
                 let result = reader.parse_entry_ref_at(0);
                 assert!(matches!(result, Err(Error::MmapReadOverflow(_, _, _))));
@@ -497,7 +531,8 @@ mod tests {
                     TEST_FILE_ID,
                     create_engine_options(),
                     create_data_reader_options(),
-                ).unwrap();
+                )
+                .unwrap();
 
                 // Reading exactly the file size should work
                 let result = reader.read_at(0, entry_data.len());
@@ -522,7 +557,8 @@ mod tests {
                 TEST_FILE_ID,
                 create_engine_options(),
                 create_hint_reader_options(),
-            ).unwrap();
+            )
+            .unwrap();
 
             let entry_ref = reader.parse_entry_ref_at(0).unwrap();
 
@@ -545,7 +581,8 @@ mod tests {
 
             for (key, value_size, value_offset) in &entries {
                 offsets.push(file_data.len());
-                let entry_data = create_valid_hint_entry(key, *value_size, TEST_TIMESTAMP, *value_offset);
+                let entry_data =
+                    create_valid_hint_entry(key, *value_size, TEST_TIMESTAMP, *value_offset);
                 file_data.extend_from_slice(&entry_data);
             }
 
@@ -555,7 +592,8 @@ mod tests {
                 TEST_FILE_ID,
                 create_engine_options(),
                 create_hint_reader_options(),
-            ).unwrap();
+            )
+            .unwrap();
 
             for (i, (expected_key, expected_value_size, _)) in entries.iter().enumerate() {
                 let entry_ref = reader.parse_entry_ref_at(offsets[i]).unwrap();
@@ -575,7 +613,8 @@ mod tests {
                 TEST_FILE_ID,
                 create_engine_options(),
                 create_hint_reader_options(),
-            ).unwrap();
+            )
+            .unwrap();
 
             let result = reader.parse_entry_ref_at(0);
             assert!(matches!(result, Err(KeyTooBig(_, _))));
@@ -593,7 +632,8 @@ mod tests {
                 TEST_FILE_ID,
                 create_engine_options(),
                 create_hint_reader_options(),
-            ).unwrap();
+            )
+            .unwrap();
 
             let result = reader.parse_entry_ref_at(0);
             assert!(matches!(result, Err(ValueTooBig(_, _))));
@@ -615,7 +655,8 @@ mod tests {
                 TEST_FILE_ID,
                 create_engine_options(),
                 create_data_reader_options(),
-            ).unwrap();
+            )
+            .unwrap();
 
             let result = reader.parse_entry_ref_at(0);
             assert!(result.is_ok());
@@ -637,7 +678,8 @@ mod tests {
                 TEST_FILE_ID,
                 create_engine_options(),
                 create_data_reader_options(),
-            ).unwrap();
+            )
+            .unwrap();
 
             let entry_ref = reader.parse_entry_ref_at(0).unwrap();
             assert_eq!(entry_ref.timestamp, 0);
@@ -656,7 +698,8 @@ mod tests {
                 TEST_FILE_ID,
                 create_engine_options(),
                 create_data_reader_options(),
-            ).unwrap();
+            )
+            .unwrap();
 
             let entry_ref = reader.parse_entry_ref_at(0).unwrap();
             assert_eq!(entry_ref.timestamp, max_timestamp);

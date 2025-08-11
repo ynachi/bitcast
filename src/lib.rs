@@ -1,11 +1,9 @@
 pub use crate::reader::FileReader;
-use std::collections::{BTreeMap, HashMap};
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::PathBuf;
-use std::sync::RwLock;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
+mod context;
 mod errors;
 mod hint;
 mod merge;
@@ -13,6 +11,9 @@ mod metrics;
 mod reader;
 mod storage;
 mod writer;
+
+pub use crate::context::FileIdAllocator;
+pub use crate::context::SharedContext;
 pub use crate::reader::ReaderOptions;
 
 // ------------------- General consts ------------------------
@@ -28,7 +29,7 @@ const HINT_AVERAGE_KEY_SIZE: usize = 256;
 pub const DATA_CRC_SIZE: usize = 4;
 
 const DATA_HEADER_SIZE: usize = 20;
-const DATA_CRC_RANGE:  std::ops::Range<usize> = 0..4;
+const DATA_CRC_RANGE: std::ops::Range<usize> = 0..4;
 const DATA_KEY_SIZE_RANGE: std::ops::Range<usize> = 4..8;
 const DATA_VALUE_SIZE_RANGE: std::ops::Range<usize> = 8..12;
 const DATA_TIMESTAMP_RANGE: std::ops::Range<usize> = 12..20;
@@ -36,6 +37,10 @@ const DATA_TIMESTAMP_RANGE: std::ops::Range<usize> = 12..20;
 
 #[derive(Debug, Clone)]
 pub struct EngineOptions {
+    /// The permission mode for creating directories.
+    pub dir_mode: u32,
+    /// The file mode to set for the data and hint files.
+    pub file_mode: u32,
     pub data_path: PathBuf,
     /// Compress old files while merging. Only the values are compressed, not the keys. This will
     /// have an impact on the performance of data retrieval but will save space. Also, the size
@@ -56,6 +61,8 @@ pub struct EngineOptions {
 impl Default for EngineOptions {
     fn default() -> Self {
         EngineOptions {
+            dir_mode: 0o750,
+            file_mode: 0o644,
             data_path: PathBuf::from("./bitcask"),
             compress_old_files: false,
             data_file_max_size: 1024 * 1024 * 128, // 128 MB
@@ -134,48 +141,6 @@ pub(crate) fn create_active_file(options: &EngineOptions, file_id: usize) -> io:
 
 pub fn hint_path_from_id(id: usize, options: &EngineOptions) -> PathBuf {
     options.data_path.join(format!("{id:06}.hint"))
-}
-
-pub struct SharedContext {
-    /// Various configuration options for the engine.
-    options: EngineOptions,
-    /// keydir, as defined in bitsect paper
-    key_dir: RwLock<HashMap<Vec<u8>, Entry>>,
-    /// Datafiles is a cache of the opened data files. The key is the file number, and the value is
-    /// a FileReader that allows reading from the file. FileReader can be thought as a file
-    /// descriptor. No ARC because the engine itself would be wrapped in an ARC.
-    data_files: RwLock<BTreeMap<usize, FileReader<true>>>,
-    file_id_allocator: FileIdAllocator,
-}
-
-impl SharedContext {
-    pub fn new(options: EngineOptions, initial_file_id: usize) -> Self {
-        Self {
-            options,
-            key_dir: RwLock::new(HashMap::new()),
-            data_files: RwLock::new(BTreeMap::new()),
-            file_id_allocator: FileIdAllocator::new(initial_file_id),
-        }
-    }
-}
-
-pub struct FileIdAllocator {
-    counter: AtomicUsize,
-}
-impl FileIdAllocator {
-    pub fn new(start: usize) -> Self {
-        Self {
-            counter: AtomicUsize::new(start),
-        }
-    }
-
-    pub fn next(&self) -> usize {
-        self.counter.fetch_add(1, Ordering::Release)
-    }
-
-    pub fn current(&self) -> usize {
-        self.counter.load(Ordering::Acquire)
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
