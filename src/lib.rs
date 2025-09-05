@@ -1,4 +1,6 @@
 pub use crate::reader::FileReader;
+use crc_fast::CrcAlgorithm::Crc32IsoHdlc;
+use crc_fast::checksum;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::PathBuf;
@@ -83,11 +85,11 @@ pub(crate) fn current_time_millis() -> u64 {
 pub struct FileWithOffset {
     pub file: File,
     pub offset: usize,
-    pub file_id: usize,
+    pub file_id: u64,
 }
 
 impl FileWithOffset {
-    pub fn new(file: File, offset: usize, file_id: usize) -> Self {
+    pub fn new(file: File, offset: usize, file_id: u64) -> Self {
         Self {
             file,
             offset,
@@ -128,7 +130,7 @@ impl From<EntryRef<'_>> for Entry {
     }
 }
 
-pub(crate) fn create_active_file(options: &EngineOptions, file_id: usize) -> io::Result<File> {
+pub(crate) fn create_active_file(options: &EngineOptions, file_id: u64) -> io::Result<File> {
     let data_file_path = options.data_path.join(format!("{file_id:06}.data"));
     let data_file = OpenOptions::new()
         .read(true)
@@ -139,7 +141,7 @@ pub(crate) fn create_active_file(options: &EngineOptions, file_id: usize) -> io:
     Ok(data_file)
 }
 
-pub fn hint_path_from_id(id: usize, options: &EngineOptions) -> PathBuf {
+pub fn hint_path_from_id(id: u64, options: &EngineOptions) -> PathBuf {
     options.data_path.join(format!("{id:06}.hint"))
 }
 
@@ -167,4 +169,27 @@ impl ByteRange {
     pub(crate) fn get_u32(&self, buf: &[u8]) -> u32 {
         u32::from_le_bytes(self.slice(buf).try_into().unwrap())
     }
+}
+
+fn create_data_entry_with_crc(key: &[u8], value: &[u8], timestamp: u64, buf: &mut Vec<u8>) {
+    create_data_entry(key, value, timestamp, buf);
+
+    let payload = &buf[4..];
+    let crc = calculate_crc(payload);
+    buf[0..4].copy_from_slice(&crc.to_le_bytes());
+}
+
+fn create_data_entry(key: &[u8], value: &[u8], timestamp: u64, buf: &mut Vec<u8>) {
+    buf.clear();
+    // Reserve space for CRC (will be filled later)
+    buf.extend_from_slice(&[0u8; 4]);
+    buf.extend_from_slice(&(key.len() as u32).to_le_bytes());
+    buf.extend_from_slice(&(value.len() as u32).to_le_bytes());
+    buf.extend_from_slice(&timestamp.to_le_bytes());
+    buf.extend_from_slice(key);
+    buf.extend_from_slice(value);
+}
+
+fn calculate_crc(data: &[u8]) -> u32 {
+    checksum(Crc32IsoHdlc, data) as u32
 }

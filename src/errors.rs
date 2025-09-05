@@ -18,24 +18,20 @@ pub enum Error {
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::Io(err) => write!(f, "IO error: {}", err),
+            Error::Io(err) => write!(f, "IO error: {err}"),
             Error::MmapReadOverflow(read_sz, file_sz, offset) => write!(
                 f,
-                "File reader: read size {} exceed file size {} offset {}",
-                read_sz, file_sz, offset
+                "File reader: read size {read_sz} exceed file size {file_sz} offset {offset}"
             ),
             Error::InvalidCRC(payload_sz) => {
-                write!(f, "File reader: invalid CRC, payload size {}", payload_sz)
+                write!(f, "File reader: invalid CRC, payload size {payload_sz}")
             }
-            Error::KeyTooBig(key_sz, max_sz) => write!(
-                f,
-                "key size {} exceed the maximum allowed {}",
-                key_sz, max_sz
-            ),
+            Error::KeyTooBig(key_sz, max_sz) => {
+                write!(f, "key size {key_sz} exceed the maximum allowed {max_sz}")
+            }
             Error::ValueTooBig(value_sz, max_sz) => write!(
                 f,
-                "value size {} exceed the maximum allowed {}",
-                value_sz, max_sz
+                "value size {value_sz} exceed the maximum allowed {max_sz}"
             ),
             Error::BufToArray => write!(f, "failed to convert a buffer to an array"),
         }

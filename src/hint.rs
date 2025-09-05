@@ -13,12 +13,12 @@ pub struct FileHintService {
 }
 
 pub enum HintMessage {
-    Hint(usize),
+    Hint(u64),
     Stop,
 }
 
 impl FileHintService {
-    pub fn new(ctx: Arc<SharedContext>) -> Self {
+    pub fn new<const USE_CRC: bool>(ctx: Arc<SharedContext<USE_CRC>>) -> Self {
         let (sender, receiver): (Sender<HintMessage>, Receiver<HintMessage>) =
             std::sync::mpsc::channel();
 
@@ -48,7 +48,7 @@ impl FileHintService {
         }
     }
 
-    pub fn notify_hint(&self, file_id: usize) {
+    pub fn notify_hint(&self, file_id: u64) {
         // TODO: Having an error here is clearly a programming error, to manage
         self.sender.send(HintMessage::Hint(file_id)).unwrap();
     }
@@ -59,6 +59,6 @@ impl FileHintService {
     }
 }
 
-fn create_hint_file_for(p0: usize, p1: &Arc<SharedContext>) {
+fn create_hint_file_for<const USE_CRC: bool>(p0: u64, p1: &Arc<SharedContext<USE_CRC>>) {
     todo!()
 }
